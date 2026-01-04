@@ -74,7 +74,7 @@ Display naming:
 
 ## Tests
 
-Add/extend `addons/homeassistant_gitops/tests/test_yaml_modules.py`:
+Add/extend `homeassistant_gitops/tests/test_yaml_modules.py`:
 
 - Create `automations/automations.unassigned.yaml` and another `automations/foo.yaml`.
 - Assert index includes:

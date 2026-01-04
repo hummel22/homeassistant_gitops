@@ -75,7 +75,7 @@ Generated IDs are restricted to `[a-z0-9_]`.
 
 ## Tests
 
-Add/update unit tests under `addons/homeassistant_gitops/tests/`:
+Add/update unit tests under `homeassistant_gitops/tests/`:
 
 - Missing `id` + `alias: "Kitchen Lights"` -> `id: "kitchen_lights"`
 - Punctuation/spaces collapse deterministically.

@@ -1,16 +1,19 @@
-# Home Assistant GitOps
-
-Smarthome as Code initiative 
+# Home Assistant GitOps Bridge
 
 The Home Assistant GitOps Bridge add-on tracks configuration changes in `/config`, exposes an
-ingress UI to stage/commit changes, and syncs with GitHub via SSH.
+ingress UI to stage and commit changes, and syncs with Git via SSH.
 
+## Installation
 
-## Add-on options
+1. Add this repository to your Home Assistant add-on store.
+2. Install the Home Assistant GitOps Bridge add-on.
+3. Start the add-on and open the ingress UI from the sidebar.
+
+## Add-on configuration
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `remote_url` | SSH URL for the GitHub repository (e.g. `git@github.com:user/ha-config.git`). | `""` |
+| `remote_url` | SSH URL for the Git repository (example: `git@github.com:user/ha-config.git`). | `""` |
 | `remote_branch` | Remote branch to sync. | `main` |
 | `notification_enabled` | Enable persistent notifications. | `true` |
 | `webhook_enabled` | Enable the webhook pull endpoint. | `false` |
@@ -21,27 +24,25 @@ ingress UI to stage/commit changes, and syncs with GitHub via SSH.
 
 ## Usage
 
-1. Install the add-on and start it.
-2. Open the ingress UI from the sidebar.
-3. Configure `remote_url` and add the generated SSH public key to GitHub.
-4. Use the UI to commit and push changes.
-5. Enable the webhook and/or periodic checks if desired.
+1. Configure `remote_url` and add the generated SSH public key to GitHub (or your Git host).
+2. Use the UI to commit and push changes.
+3. Enable the webhook and/or periodic checks if desired.
 
 ## GitOps config file
 
 The add-on writes a GitOps config file into your repository at `/config/.gitops/config.yaml`.
 It mirrors all add-on options so they can be tracked in Git and reviewed in pull requests.
 If you edit `/config/.gitops/config.yaml`, restart the add-on to apply changes.
-Commit this file along with the rest of your Home Assistant configuration.
 Legacy `/config/.gitops.yaml` files are migrated into the new folder on startup.
 
 ## Manual Git setup
 
-If you already manage `/config` with Git, the add-on will detect the existing repository and will not re-initialize or overwrite it. It will keep using your `.gitignore` and history.
+If you already manage `/config` with Git, the add-on will detect the existing repository and
+will not re-initialize or overwrite it. It will keep using your `.gitignore` and history.
 
 To configure Git manually:
 
-1. Create a GitHub repository (empty, no README or `.gitignore`).
+1. Create a Git repository (empty, no README or `.gitignore`).
 2. From the Home Assistant host, initialize or clone into `/config`:
    - New repo: `cd /config && git init -b main`
    - Existing repo: `cd /config && git clone git@github.com:YOUR_USER/YOUR_REPO.git .`
@@ -60,30 +61,14 @@ When `webhook_enabled` is true, POST to `/api/webhook/<webhook_path>` to trigger
 ## YAML Modules workflow
 
 YAML Modules lets you keep configuration split across package modules and one-off files while
-still supporting Home Assistant domain files. The UI exposes a single action: **Sync modules**.
+still supporting Home Assistant domain files. The UI exposes a single action: Sync modules.
 
-Definitions:
-
-- Build: write domain YAML from module files.
-- Update: write module files from domain YAML.
-- Sync: runs build and update with conflict rules (assigned modules win, unassigned changes stay
-  in unassigned files).
-- Modules: Git ops pacakges, either found in /packages or one-offs found under domain folder ex: /automations/my_automation.yaml
-- Domain files: top level files created by home assistant
-
-### Folder convention (hybrid)
-
-Package modules (cohesive bundles):
+Folder convention (hybrid):
 
 ```
 /packages/wakeup/automation.yaml
 /packages/wakeup/helpers.yaml
 /packages/wakeup/template.yaml
-```
-
-One-offs (single-domain files):
-
-```
 /automations/dishwasher.yaml
 /scripts/water_plants.yaml
 /scenes/movie_time.yaml
@@ -92,14 +77,14 @@ One-offs (single-domain files):
 ```
 
 Unassigned items created from the UI are stored in the one-off folder using the
-`*.unassigned.yaml` pattern, e.g. `automations/automations.unassigned.yaml`.
+`*.unassigned.yaml` pattern, example: `automations/automations.unassigned.yaml`.
 
-### Sync behavior
+Sync behavior:
 
 - Module files can live in `/packages/<module>/` or per-domain folders (hybrid layout).
 - Sync builds domain files like `automations.yaml`, `scripts.yaml`, and `scenes.yaml`.
 - Sync updates module files when domain files change (UI edits).
-- Missing automation/scene IDs are auto-injected; lovelace views use `path` if missing.
+- Missing automation or scene IDs are auto-injected; lovelace views use `path` if missing.
 - Helper modules (`helpers.yaml`) are split into per-helper-type domain files.
 - Lovelace YAML mode is supported via `ui-lovelace.yaml`.
 
@@ -117,20 +102,7 @@ input_datetime:
 Lovelace module files can be either a list of views or a map with a `views` list plus metadata
 keys (the first module with metadata becomes the base).
 
-### GitOps mappings
-
 YAML Modules stores mapping and sync state under `/config/.gitops/`:
 
 - `mappings/*.yaml` tracks which items belong to which module files.
 - `sync-state.yaml` stores hashes used to detect changes.
-
-See `homeassistant_gitops/docs/feature-checklist.md` for planned enhancements.
-
-## Development
-
-Use `uv` to run the service and tests locally:
-
-```
-uv run --project homeassistant_gitops python homeassistant_gitops/rootfs/app/main.py
-uv run --project homeassistant_gitops --extra dev pytest homeassistant_gitops/tests
-```

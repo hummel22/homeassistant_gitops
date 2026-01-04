@@ -103,5 +103,5 @@ Run each scenario and record:
 - Existing YAML Modules already computes an `item.fingerprint` that excludes the `id` field for list
   domains (automation/scene/lovelace). That fingerprint can be used to match items when `id` changes.
 - Existing add-on code can call services using Supervisor token (see
-  `addons/homeassistant_gitops/rootfs/app/gitops_bridge/ha_services.py`).
+  `homeassistant_gitops/rootfs/app/gitops_bridge/ha_services.py`).
 

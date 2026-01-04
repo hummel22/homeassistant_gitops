@@ -127,7 +127,7 @@ template and then resync.
 
 ## Tests
 
-Add unit tests under `addons/homeassistant_gitops/tests/`:
+Add unit tests under `homeassistant_gitops/tests/`:
 
 - Template include resolves a single file and expands into domain output.
 - Glob include resolves multiple templates deterministically.

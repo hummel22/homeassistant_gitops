@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-APP_DIR = REPO_ROOT / "addons/homeassistant_gitops/rootfs/app"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+APP_DIR = REPO_ROOT / "homeassistant_gitops/rootfs/app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 

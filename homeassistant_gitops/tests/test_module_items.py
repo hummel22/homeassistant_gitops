@@ -10,8 +10,8 @@ import pytest
 
 yaml = pytest.importorskip("yaml")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-APP_PATH = REPO_ROOT / "addons/homeassistant_gitops/rootfs/app/main.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+APP_PATH = REPO_ROOT / "homeassistant_gitops/rootfs/app/main.py"
 
 
 def load_main(tmp_path: Path):

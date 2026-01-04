@@ -93,7 +93,7 @@ So changes to `groups.yaml`, `groups/*.yaml`, and `packages/*/groups.yaml` parti
 
 ## Tests
 
-Add unit tests under `addons/homeassistant_gitops/tests/`:
+Add unit tests under `homeassistant_gitops/tests/`:
 
 - Sync round-trip for groups mapping domain:
   - modules -> domain (build)

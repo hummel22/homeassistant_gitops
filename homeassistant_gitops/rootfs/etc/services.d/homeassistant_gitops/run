@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Start the Home Assistant GitOps Bridge service
+# ==============================================================================
+set -e
+
+exec python /app/main.py --port 8099

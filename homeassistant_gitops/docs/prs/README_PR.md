@@ -1,12 +1,12 @@
 # PR Plan (Home Assistant GitOps Bridge)
 
 This folder contains detailed, implementor-facing PR descriptions for the planned work in
-`addons/homeassistant_gitops`.
+`homeassistant_gitops`.
 
 Use the following agent prompt and description when you want an agent to take a PR brief,
 refine it with you, and then implement it. The workflow is:
 
-1. Create a PR file in `addons/homeassistant_gitops/docs/prs/*.md` with top-level descriptions.
+1. Create a PR file in `homeassistant_gitops/docs/prs/*.md` with top-level descriptions.
 2. Point the agent at that PR file.
 3. Paste the prompt below.
 4. Collaborate to refine the PR before implementation. Ask the user questions to help you refine the PR
@@ -14,9 +14,9 @@ refine it with you, and then implement it. The workflow is:
 ## Description for agents
 
 - This repository includes the Home Assistant GitOps Bridge add-on.
-- Backend: FastAPI in `addons/homeassistant_gitops/rootfs/app/gitops_bridge`.
-- UI: static HTML/CSS/JS in `addons/homeassistant_gitops/rootfs/app/static`.
-- YAML Modules logic is centralized in `addons/homeassistant_gitops/rootfs/app/gitops_bridge/yaml_modules.py`.
+- Backend: FastAPI in `homeassistant_gitops/rootfs/app/gitops_bridge`.
+- UI: static HTML/CSS/JS in `homeassistant_gitops/rootfs/app/static`.
+- YAML Modules logic is centralized in `homeassistant_gitops/rootfs/app/gitops_bridge/yaml_modules.py`.
 - Mappings and sync state live under `.gitops/` in the config directory (`mappings/*.yaml`,
   `sync-state.yaml`).
 - Module sources:
@@ -52,7 +52,7 @@ Task: Refine and implement the PR described in: <PR_FILE_PATH>
 
 Workflow:
 1) Read <PR_FILE_PATH> and summarize the goal in 3-5 bullets.
-2) Inspect current implementation in `addons/homeassistant_gitops/` to understand what exists.
+2) Inspect current implementation in `homeassistant_gitops/` to understand what exists.
 3) Ask clarifying questions for any ambiguous requirements, edge cases, or missing acceptance
    criteria. Do NOT start code until questions are answered.
 4) Propose concrete PR refinements (expanded scope, API/UI behavior, test plan, data schemas).

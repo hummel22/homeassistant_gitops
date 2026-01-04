@@ -98,7 +98,7 @@ Or:
 
 ### 4) Tests
 
-Add targeted unit tests in `addons/homeassistant_gitops/tests/`:
+Add targeted unit tests in `homeassistant_gitops/tests/`:
 
 - New automation without `id` becomes `id == alias` (or normalized alias).
 - Duplicate alias collision -> deterministic suffix.
