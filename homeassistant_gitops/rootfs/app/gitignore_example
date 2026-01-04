@@ -1,0 +1,101 @@
+################################################################################
+# Home Assistant /config .gitignore (safe-by-default)
+#
+# Goals:
+# - Version control your YAML, packages, scripts, automations, dashboards, etc.
+# - Avoid committing secrets, credentials, tokens, and volatile runtime state.
+################################################################################
+
+##############################
+# Secrets / credentials
+##############################
+.ssh/
+secrets.yaml
+**/secrets.yaml
+ip_bans.yaml
+**/ip_bans.yaml
+known_devices.yaml
+**/known_devices.yaml
+
+# Common token/cache files created by integrations
+.google.token
+*.token
+*.tokens
+*.oauth
+*.credentials
+*.cred
+
+# TLS/private keys and keystores (keep these out of git unless you *really* know what you're doing)
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+
+##############################
+# Home Assistant runtime/state (UI-managed + volatile)
+##############################
+# Contains auth + registries + config entries and changes frequently — backup it, but generally
+# don't commit it to git. :contentReference[oaicite:1]{index=1}
+.storage/*
+!.storage/
+!.storage/lovelace*
+.cloud/
+
+##############################
+# Databases / logs / recordings
+##############################
+home-assistant_v2.db*
+home-assistant.log*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+*.log.*
+
+# TTS cache
+tts/
+
+##############################
+# Z-Wave / legacy integration artifacts (only present if you use them)
+##############################
+OZW_Log.txt
+pyozw.sqlite
+zwcfg_*.xml
+zwscene.xml
+
+##############################
+# HACS downloaded frontend assets (optional, reduces churn)
+##############################
+www/community/
+
+# HACS / custom integrations (OPTIONAL)
+# If you want your repo to be “rebuildable” without re-downloading, delete this ignore.
+custom_components/
+
+##############################
+# Backups / archives / temp
+##############################
+backups/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.bak
+*.tmp
+*.old
+
+##############################
+# Editor/OS junk (Samba / VS Code / macOS / Windows)
+##############################
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+

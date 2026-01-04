@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home Assistant GitOps Bridge</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@primer/css@21.0.7/dist/primer.css" />
+  <link rel="stylesheet" href="/static/vendor/diff2html.min.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-bar">
+      <div class="app-brand">
+        <div class="brand-mark">HA</div>
+        <div>
+          <div class="brand-title">GitOps Bridge</div>
+          <div class="brand-subtitle">Configuration control for Home Assistant</div>
+        </div>
+      </div>
+      <nav class="tab-strip" role="tablist">
+        <button class="tab-btn is-active" data-tab="status" aria-controls="tab-status">Status</button>
+        <button class="tab-btn" data-tab="git" aria-controls="tab-git">Git</button>
+        <button class="tab-btn" data-tab="history" aria-controls="tab-history">History</button>
+        <button class="tab-btn" data-tab="modules" aria-controls="tab-modules">YAML Modules</button>
+        <button class="tab-btn" data-tab="groups" aria-controls="tab-groups">Groups</button>
+        <button class="tab-btn" data-tab="exports" aria-controls="tab-exports">Export</button>
+      </nav>
+      <button class="tab-btn icon-btn" data-tab="settings" aria-controls="tab-settings" aria-label="Settings">
+        <span class="material-symbols-outlined">settings</span>
+      </button>
+    </header>
+
+    <main class="app-content">
+      <section id="tab-status" class="tab-panel is-active" role="tabpanel">
+        <div class="status-grid">
+          <div class="card">
+            <div class="card-header">Current State</div>
+            <div id="status-summary" class="summary-grid"></div>
+            <div class="card-actions">
+              <button id="status-refresh" class="btn">Refresh</button>
+              <button id="remote-refresh" class="btn">Check Remote</button>
+            </div>
+            <div id="status-message" class="note"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">Operator Overview</div>
+            <p class="note">
+              Status is the system landing page. Use Git for working tree diffs, staging, and commits.
+              Use History to review branches, commits, and switch state. Use YAML Modules for module sync.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-git" class="tab-panel" role="tabpanel">
+        <div class="status-grid">
+          <div class="card">
+            <div class="card-header">Commit & Sync</div>
+            <label>Commit message</label>
+            <input type="text" id="commit-message" placeholder="Describe your change" />
+            <div class="button-row">
+              <button id="commit-staged" class="btn">Commit staged</button>
+              <button id="commit-all" class="btn btn-primary">Commit all</button>
+            </div>
+            <div class="button-row">
+              <button id="pull-btn" class="btn">Pull</button>
+              <button id="push-btn" class="btn">Push</button>
+            </div>
+            <div id="commit-status" class="note"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">Working Tree Checklist</div>
+            <p class="note">
+              Stage changes, review diffs, then commit and push. Use History to inspect prior commits.
+            </p>
+          </div>
+        </div>
+
+        <div class="card diff-toolbar">
+          <div class="card-header">Working Tree Diffs</div>
+          <div class="toolbar-row">
+            <div id="diff-mode" class="segmented" role="tablist">
+              <button class="segmented-btn is-active" data-mode="all">All</button>
+              <button class="segmented-btn" data-mode="staged">Staged</button>
+              <button class="segmented-btn" data-mode="unstaged">Unstaged</button>
+            </div>
+            <div class="button-row">
+              <button id="stage-all" class="btn">Stage all</button>
+              <button id="unstage-all" class="btn">Unstage all</button>
+            </div>
+          </div>
+          <div id="diff-list" class="diff-list"></div>
+        </div>
+      </section>
+
+      <section id="tab-history" class="tab-panel" role="tabpanel">
+        <div class="git-grid">
+          <aside class="card branch-card">
+            <div class="card-header">Branches</div>
+            <label>Select branch</label>
+            <select id="branch-select"></select>
+            <div id="commit-list" class="commit-list"></div>
+          </aside>
+          <section class="card commit-card">
+            <div class="commit-header">
+              <div>
+                <div class="card-header">Commit History</div>
+                <div id="commit-meta" class="note">Select a commit to inspect its diff.</div>
+              </div>
+              <button id="reset-commit" class="btn btn-danger" disabled>
+                Set state to this commit
+              </button>
+            </div>
+            <div id="commit-diffs" class="diff-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="tab-modules" class="tab-panel" role="tabpanel">
+        <div class="git-grid modules-grid">
+          <aside class="card module-sidebar">
+            <div class="card-header">Module Browser</div>
+            <p class="note">
+              Browse YAML Modules by package name (<code>packages/&lt;name&gt;/</code>) or domain
+              folders (<code>automations/</code>, <code>scripts/</code>, <code>scenes/</code>,
+              <code>templates/</code>, <code>helpers/</code>, <code>lovelace/</code>). UI-created
+              entries land in <code>*.unassigned.yaml</code>. Sync after edits to rebuild domain
+              files.
+            </p>
+            <label for="module-select">Select module</label>
+            <select id="module-select"></select>
+            <div id="module-file-list" class="commit-list"></div>
+            <div class="module-selection">
+              <div class="module-selection-title">Selected items</div>
+              <div id="module-selection-count" class="note">No items selected.</div>
+            </div>
+            <div class="module-sidebar-footer">
+              <p id="modules-status" class="note"></p>
+              <div class="button-row">
+                <button id="modules-preview-btn" class="btn">Preview sync</button>
+                <button id="modules-sync-btn" class="btn btn-primary">Sync modules</button>
+              </div>
+            </div>
+          </aside>
+          <section class="card module-editor-card">
+            <div class="commit-header module-editor-header">
+              <div>
+                <div class="card-header">Module File</div>
+                <div id="module-file-meta" class="note">Select a module file to inspect and edit.</div>
+              </div>
+              <div class="button-row">
+                <button id="module-save-btn" class="btn btn-primary" disabled>Save file</button>
+                <button id="module-delete-btn" class="btn btn-danger" disabled>Delete file</button>
+              </div>
+            </div>
+            <div class="module-item-actions">
+              <div class="module-item-actions-note note">
+                Use selection actions to move, unassign, or delete the highlighted items.
+              </div>
+              <div class="button-row">
+                <button id="module-move-btn" class="btn btn-primary" disabled>
+                  Move / Save to package...
+                </button>
+                <button id="module-unassign-btn" class="btn" disabled>Unassign</button>
+                <button id="module-delete-items-btn" class="btn btn-danger" disabled>
+                  Delete items
+                </button>
+              </div>
+            </div>
+            <div id="module-editor" class="module-editor">
+              <div class="module-editor-placeholder">Select a module file to start editing.</div>
+            </div>
+            <div id="module-editor-status" class="note"></div>
+          </section>
+        </div>
+
+        <div class="card module-preview-card">
+          <div class="card-header">Preview Sync</div>
+          <p class="note">
+            Preview shows the YAML changes that sync would apply. It includes HA-facing YAML only
+            and skips GitOps state files and exports.
+          </p>
+          <div class="module-preview-grid">
+            <div class="module-preview-section">
+              <div class="module-preview-title">Build (modules → domain)</div>
+              <div id="modules-preview-build" class="diff-list"></div>
+            </div>
+            <div class="module-preview-section">
+              <div class="module-preview-title">Update (domain → modules/one-offs)</div>
+              <div id="modules-preview-update" class="diff-list"></div>
+            </div>
+          </div>
+          <div id="modules-preview-status" class="note"></div>
+        </div>
+      </section>
+
+      <section id="tab-exports" class="tab-panel" role="tabpanel">
+        <div class="card export-tabs">
+          <div class="card-header">Registry Exports</div>
+          <div class="segmented" role="tablist">
+            <button class="segmented-btn is-active export-tab-btn" data-export-tab="entities">
+              Entities
+            </button>
+            <button class="segmented-btn export-tab-btn" data-export-tab="areas">
+              Areas
+            </button>
+            <button class="segmented-btn export-tab-btn" data-export-tab="devices">
+              Devices
+            </button>
+            <button class="segmented-btn export-tab-btn" data-export-tab="groups">
+              Groups
+            </button>
+          </div>
+        </div>
+
+        <div class="git-grid export-grid">
+          <aside class="card export-config-card">
+            <div class="card-header">Export Controls</div>
+            <p class="note">
+              Exports write CSV files to <code>system/</code>. Commit the CSV snapshots to
+              track registry changes without storing <code>.storage</code>.
+            </p>
+            <div class="export-controls">
+              <button id="export-run-btn" class="btn btn-primary">Run export</button>
+              <div id="export-status" class="note"></div>
+            </div>
+            <div id="export-config-entities" class="export-config-section">
+              <label for="export-blacklist">Integration blacklist (one per line)</label>
+              <textarea
+                id="export-blacklist"
+                rows="6"
+                placeholder="hacs&#10;google_assistant"
+              ></textarea>
+              <div class="button-row">
+                <button id="export-save-config" class="btn">Save export config</button>
+              </div>
+              <p class="note">
+                Blacklisted integrations are excluded from <code>entities.csv</code>.
+                Settings are saved to <code>.gitops/exports.config.yaml</code>.
+              </p>
+            </div>
+            <div id="export-config-other" class="export-config-section" hidden>
+              <p class="note">No additional settings for this export.</p>
+            </div>
+          </aside>
+          <section class="card export-table-card">
+            <div class="commit-header">
+              <div>
+                <div class="card-header">Export Preview</div>
+                <div id="export-file-meta" class="note">No export run yet.</div>
+              </div>
+            </div>
+            <div id="export-table" class="export-table">
+              <div class="diff-placeholder">No export run yet.</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="tab-groups" class="tab-panel" role="tabpanel">
+        <div class="card">
+          <div class="card-header">Groups</div>
+          <p class="note">
+            Manage GitOps-backed Home Assistant <code>group.*</code> entities stored in YAML Modules.
+            Changes require a Home Assistant restart (GitOps Bridge does not call reload services automatically).
+          </p>
+          <div id="groups-restart-banner" class="note" hidden>
+            Groups changed. Restart Home Assistant, then click
+            <button id="groups-restart-ack" class="btn">I restarted</button>.
+          </div>
+          <div id="groups-config-warning" class="note" hidden></div>
+        </div>
+
+        <div class="git-grid export-grid">
+          <aside class="card">
+            <div class="card-header">Managed Group Editor</div>
+            <label for="groups-object-id">Object ID</label>
+            <input id="groups-object-id" type="text" placeholder="kitchen" />
+            <label for="groups-name">Name</label>
+            <input id="groups-name" type="text" placeholder="Kitchen" />
+            <label for="groups-members">Members (one per line)</label>
+            <textarea id="groups-members" rows="8" placeholder="light.kitchen&#10;switch.coffee"></textarea>
+
+            <div class="settings-section">
+              <div class="section-title">Destination</div>
+              <label for="groups-destination-type">Write group to</label>
+              <select id="groups-destination-type">
+                <option value="package">Package (<code>packages/&lt;pkg&gt;/groups.yaml</code>)</option>
+                <option value="one_off">One-off (<code>groups/*.yaml</code>)</option>
+              </select>
+              <div id="groups-destination-package">
+                <label for="groups-package-name">Package name</label>
+                <input id="groups-package-name" type="text" placeholder="kitchen" />
+              </div>
+              <div id="groups-destination-one-off" hidden>
+                <label for="groups-one-off-filename">Groups filename</label>
+                <input id="groups-one-off-filename" type="text" placeholder="my_groups.yaml" />
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button id="groups-save" class="btn btn-primary">Save group</button>
+              <button id="groups-delete" class="btn" disabled>Delete</button>
+              <button id="groups-clear" class="btn">Clear</button>
+            </div>
+            <div id="groups-status" class="note"></div>
+          </aside>
+
+          <section class="card export-table-card">
+            <div class="commit-header">
+              <div>
+                <div class="card-header">Groups</div>
+                <div class="note">
+                  Managed groups come from YAML Modules (<code>groups.yaml</code> + <code>groups/</code> + packages).
+                  Unmanaged groups come from Home Assistant runtime (<code>/api/states</code>).
+                </div>
+              </div>
+              <div class="button-row">
+                <button id="groups-refresh" class="btn">Refresh</button>
+                <label><input type="checkbox" id="groups-show-unmanaged" /> Show unmanaged</label>
+                <label><input type="checkbox" id="groups-show-ignored" /> Show ignored</label>
+              </div>
+            </div>
+
+            <div class="export-table">
+              <div class="section-title">Managed</div>
+              <div id="groups-managed-table" class="export-table"></div>
+              <div id="groups-unmanaged-section" hidden>
+                <div class="section-title">Unmanaged</div>
+                <div id="groups-unmanaged-table" class="export-table"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab-panel" role="tabpanel">
+        <div class="settings-grid">
+          <div class="card">
+            <div class="card-header">Settings</div>
+            <p class="note">
+              Settings are saved to <code>.gitops/config.yaml</code>. Restart the add-on to apply backend
+              changes. Theme updates apply immediately. YAML Modules live in the YAML Modules tab.
+            </p>
+            <label>Remote URL</label>
+            <input type="text" id="config-remote-url" placeholder="git@github.com:user/ha-config.git" />
+            <label>Remote branch</label>
+            <input type="text" id="config-remote-branch" placeholder="main" />
+            <label>Git user name</label>
+            <input type="text" id="config-git-user-name" placeholder="Home Assistant" />
+            <label>Git user email</label>
+            <input type="text" id="config-git-user-email" placeholder="home@assistant.local" />
+            <label>Webhook path</label>
+            <input type="text" id="config-webhook-path" placeholder="pull" />
+            <label>Poll interval minutes</label>
+            <input type="text" id="config-poll-interval" placeholder="15" />
+            <label>Theme</label>
+            <select id="config-ui-theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <div class="toggle-grid">
+              <label><input type="checkbox" id="config-notifications" /> Enable notifications</label>
+              <label><input type="checkbox" id="config-webhook-enabled" /> Enable webhook</label>
+              <label><input type="checkbox" id="config-yaml-modules" /> Enable YAML Modules</label>
+            </div>
+            <p class="note">Git user name and email are stored in the repo config used for commits.</p>
+            <button id="save-config" class="btn btn-primary">Save configuration</button>
+            <div id="config-status" class="note"></div>
+            <div class="settings-section">
+              <div class="section-title">CLI</div>
+              <p class="note">
+                Install the repo-local CLI into <code>.gitops/cli</code> for
+                <code>validate</code>, <code>build</code>, and <code>update</code> commands.
+              </p>
+              <label>
+                <input type="checkbox" id="cli-overwrite" />
+                Overwrite existing CLI files
+              </label>
+              <div class="button-row">
+                <button id="cli-install" class="btn">Install CLI</button>
+              </div>
+              <div id="cli-status" class="note"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">SSH Keys</div>
+            <p class="note">SSH keys live in <code>/config/.ssh</code>.</p>
+            <div id="ssh-status" class="note"></div>
+            <div class="button-row">
+              <button id="ssh-generate-btn" class="btn">Generate keypair</button>
+              <button id="ssh-load-btn" class="btn">Load public key</button>
+              <button id="ssh-test-btn" class="btn">Test SSH connection</button>
+            </div>
+            <pre id="ssh-public-key"></pre>
+            <div id="ssh-instructions" class="note"></div>
+            <div id="ssh-test-status" class="note"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <div id="module-move-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="card-header">Move selected items</div>
+        <button id="module-move-close" class="icon-btn" aria-label="Close">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="note">Choose where the selected items should be saved.</p>
+        <div class="modal-form">
+          <label>Destination type</label>
+          <div class="radio-row">
+            <label>
+              <input type="radio" name="module-move-type" value="existing_package" checked />
+              Existing package
+            </label>
+            <label>
+              <input type="radio" name="module-move-type" value="new_package" />
+              New package
+            </label>
+            <label>
+              <input type="radio" name="module-move-type" value="one_off" />
+              One-off file
+            </label>
+          </div>
+          <div class="module-move-field" data-field="existing_package">
+            <label>Select package</label>
+            <select id="module-move-package"></select>
+          </div>
+          <div class="module-move-field" data-field="new_package" hidden>
+            <label>New package name</label>
+            <input type="text" id="module-move-new-package" placeholder="kitchen" />
+          </div>
+          <div class="module-move-field" data-field="one_off" hidden>
+            <label>One-off filename</label>
+            <input type="text" id="module-move-one-off" placeholder="dishwasher.yaml" />
+            <div class="note">
+              One-off files are saved under the selected domain folder.
+            </div>
+          </div>
+          <div id="module-move-summary" class="note"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="module-move-cancel" class="btn">Cancel</button>
+        <button id="module-move-confirm" class="btn btn-primary">
+          Move items
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.MONACO_BASE = "https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min";
+    window.MonacoEnvironment = {
+      getWorkerUrl: function () {
+        const proxy = [
+          "self.MonacoEnvironment = { baseUrl: '" + window.MONACO_BASE + "/' };",
+          "importScripts('" + window.MONACO_BASE + "/vs/base/worker/workerMain.js');",
+        ].join("\n");
+        return "data:text/javascript;charset=utf-8," + encodeURIComponent(proxy);
+      },
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
+  <script src="/static/vendor/diff2html.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

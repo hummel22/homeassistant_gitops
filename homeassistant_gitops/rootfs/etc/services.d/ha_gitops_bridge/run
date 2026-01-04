@@ -1,0 +1,5 @@
+#!/usr/bin/with-contenv bashio
+set -euo pipefail
+
+PORT="${INGRESS_PORT:-8099}"
+exec uv run --project /app python /app/main.py --port "${PORT}"
