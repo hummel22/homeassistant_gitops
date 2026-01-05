@@ -298,8 +298,112 @@ def update_source_from_markers() -> list[str]:
     return updated
 
 
-def _unassigned_module_path(module_dir: Path) -> Path:
+def _legacy_unassigned_module_path(module_dir: Path) -> Path:
     return module_dir / f"{module_dir.name}.unassigned.yaml"
+
+
+def _unassigned_module_path(module_dir: Path) -> Path:
+    unassigned_dir = settings.PACKAGES_DIR / "unassigned"
+    if module_dir.name == "helpers":
+        return unassigned_dir / "helpers.yaml"
+    domain_key = MODULE_DOMAIN_MAP.get(module_dir.name)
+    if domain_key:
+        spec = _spec_by_key(domain_key)
+        if spec:
+            return unassigned_dir / spec.package_filename
+    return _legacy_unassigned_module_path(module_dir)
+
+
+def _merge_legacy_unassigned(
+    legacy_path: Path,
+    new_path: Path,
+    module_dir: Path,
+    spec: DomainSpec | None,
+) -> None:
+    data, _lines, error = yaml_load(legacy_path)
+    if error:
+        raise ValueError(error)
+    if data is None:
+        return
+    if module_dir.name == "helpers":
+        if not isinstance(data, dict):
+            raise ValueError("Legacy unassigned helpers file is not a map.")
+        items: list[dict[str, Any]] = []
+        for helper_type, helper_values in data.items():
+            if helper_type not in HELPER_TYPES:
+                continue
+            if not isinstance(helper_values, dict):
+                raise ValueError("Legacy unassigned helpers file has non-map helper data.")
+            for key, value in helper_values.items():
+                items.append({"helper_type": helper_type, "key": str(key), "data": value})
+        if items:
+            _append_items_to_helpers_file(new_path, items)
+        return
+    if not spec:
+        raise ValueError("Missing domain spec for legacy unassigned merge.")
+    if spec.kind == "mapping":
+        if not isinstance(data, dict):
+            raise ValueError("Legacy unassigned file is not a map.")
+        items = [{"key": str(key), "data": value} for key, value in data.items()]
+        if items:
+            _append_items_to_mapping_file(new_path, items)
+        return
+    if spec.kind == "lovelace":
+        items_data: list[Any] = []
+        if isinstance(data, list):
+            items_data = data
+        elif isinstance(data, dict):
+            views = data.get("views")
+            if not isinstance(views, list):
+                raise ValueError("Legacy unassigned lovelace file is not a list.")
+            items_data = views
+        else:
+            raise ValueError("Legacy unassigned lovelace file is not a list.")
+        items = [{"data": entry} for entry in items_data if isinstance(entry, dict)]
+        if items:
+            _append_items_to_lovelace_file(new_path, spec, items)
+        return
+    if not isinstance(data, list):
+        raise ValueError("Legacy unassigned file is not a list.")
+    items = [{"data": entry} for entry in data if isinstance(entry, dict)]
+    if items:
+        _append_items_to_list_file(new_path, spec, items)
+
+
+def _ensure_unassigned_path(
+    module_dir: Path,
+    spec: DomainSpec | None,
+    warnings: list[str],
+    preview: dict[str, str] | None,
+) -> Path:
+    new_path = _unassigned_module_path(module_dir)
+    if preview is not None:
+        return new_path
+    legacy_path = _legacy_unassigned_module_path(module_dir)
+    if legacy_path == new_path or not legacy_path.exists():
+        return new_path
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    if not new_path.exists():
+        legacy_path.rename(new_path)
+        warnings.append(
+            f"Migrated {legacy_path.relative_to(settings.CONFIG_DIR)} to "
+            f"{new_path.relative_to(settings.CONFIG_DIR)}."
+        )
+        return new_path
+    try:
+        _merge_legacy_unassigned(legacy_path, new_path, module_dir, spec)
+    except ValueError as exc:
+        warnings.append(
+            f"Unable to merge legacy unassigned file {legacy_path.relative_to(settings.CONFIG_DIR)} "
+            f"into {new_path.relative_to(settings.CONFIG_DIR)}: {exc}"
+        )
+        return new_path
+    legacy_path.unlink()
+    warnings.append(
+        f"Merged {legacy_path.relative_to(settings.CONFIG_DIR)} into "
+        f"{new_path.relative_to(settings.CONFIG_DIR)}."
+    )
+    return new_path
 
 
 def _normalize_value(value: Any, exclude_keys: set[str]) -> Any:
@@ -698,7 +802,11 @@ def _write_yaml(path: Path, data: Any, preview: dict[str, str] | None) -> bool:
 
 
 def _is_empty_yaml_payload(data: Any) -> bool:
-    return data is None or data == [] or data == {}
+    if data is None or data == [] or data == {}:
+        return True
+    if isinstance(data, dict) and set(data.keys()) == {"views"}:
+        return data.get("views") == []
+    return False
 
 
 def _write_domain_yaml(path: Path, data: Any, preview: dict[str, str] | None) -> bool:
@@ -1103,7 +1211,7 @@ def _sync_list_domain(
     if not domain_valid and not module_items_by_file:
         return changed_files
 
-    unassigned_path = _unassigned_module_path(spec.module_dir)
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
     unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
@@ -1347,7 +1455,7 @@ def _sync_mapping_domain(
     if not domain_valid and not module_items_by_file:
         return changed_files
 
-    unassigned_path = _unassigned_module_path(spec.module_dir)
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
     unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
@@ -1597,7 +1705,7 @@ def _sync_lovelace_domain(
     if not domain_valid and not lovelace_modules:
         return changed_files
 
-    unassigned_path = _unassigned_module_path(spec.module_dir)
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
     unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
@@ -1937,7 +2045,7 @@ def _sync_helpers(
                 continue
             domain_items_by_id[composite_id] = item
 
-    unassigned_path = _unassigned_module_path(helpers_dir)
+    unassigned_path = _ensure_unassigned_path(helpers_dir, None, warnings, preview)
     unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(HELPERS_DOMAIN_KEY, unassigned_rel)
     warnings.extend(mapping_warnings)
@@ -2131,7 +2239,7 @@ def _sync_helpers(
                     continue
                 combined[item.ha_id] = item.expanded
         domain_path = settings.CONFIG_DIR / f"{helper_type}.yaml"
-        if write_domain and _write_yaml(domain_path, combined, preview):
+        if write_domain and _write_domain_yaml(domain_path, combined, preview):
             changed_files.append(domain_path.relative_to(settings.CONFIG_DIR).as_posix())
 
     entries: list[dict[str, Any]] = []
@@ -3331,6 +3439,8 @@ def _resolve_destination_path(
         package_name = move_target.get("package_name")
         if not isinstance(package_name, str) or not package_name.strip():
             raise ValueError("package_name is required.")
+        if package_name.strip() == "unassigned":
+            raise ValueError("Package name 'unassigned' is reserved.")
         package_dir = settings.PACKAGES_DIR / package_name.strip()
         if target_type == "existing_package" and not package_dir.exists():
             raise ValueError("Package does not exist.")
@@ -3579,6 +3689,8 @@ def list_yaml_modules_index() -> dict[str, Any]:
             if len(parts) < 2:
                 continue
             package_name = Path(parts[1]).stem if len(parts) == 2 else parts[1]
+            if package_name == "unassigned":
+                continue
             module = modules.setdefault(
                 package_name,
                 {
@@ -3596,21 +3708,40 @@ def list_yaml_modules_index() -> dict[str, Any]:
 
     one_off_modules: list[dict[str, Any]] = []
     unassigned_modules: list[dict[str, Any]] = []
+    unassigned_files_by_domain: dict[str, str] = {}
+    unassigned_dir = settings.PACKAGES_DIR / "unassigned"
+    if unassigned_dir.exists():
+        for path in sorted(unassigned_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if not _is_yaml_path(path):
+                continue
+            domain = None
+            if path.name == "helpers.yaml":
+                domain = "helpers"
+            else:
+                spec = _spec_by_package_filename(path.name)
+                if spec:
+                    domain = spec.module_dir.name
+            if domain:
+                unassigned_files_by_domain[domain] = path.relative_to(
+                    settings.CONFIG_DIR
+                ).as_posix()
     for domain in MODULE_BROWSER_DOMAINS:
         dir_path = settings.CONFIG_DIR / domain
-        if not dir_path.exists():
-            continue
-        files = sorted(
-            path.relative_to(settings.CONFIG_DIR).as_posix()
-            for path in dir_path.rglob("*")
-            if path.is_file() and _is_yaml_path(path)
-        )
-        if not files:
-            continue
-        canonical_unassigned = _unassigned_module_path(dir_path).relative_to(
+        files: list[str] = []
+        legacy_unassigned = _legacy_unassigned_module_path(dir_path).relative_to(
             settings.CONFIG_DIR
         ).as_posix()
-        one_off_files = [path for path in files if path != canonical_unassigned]
+        if dir_path.exists():
+            files = sorted(
+                path.relative_to(settings.CONFIG_DIR).as_posix()
+                for path in dir_path.rglob("*")
+                if path.is_file() and _is_yaml_path(path)
+            )
+        canonical_unassigned = unassigned_files_by_domain.get(domain)
+        fallback_unassigned = legacy_unassigned if legacy_unassigned in files else None
+        one_off_files = [path for path in files if path not in {legacy_unassigned}]
         if one_off_files:
             one_off_modules.append(
                 {
@@ -3620,13 +3751,14 @@ def list_yaml_modules_index() -> dict[str, Any]:
                     "files": one_off_files,
                 }
             )
-        if canonical_unassigned in files:
+        unassigned_path = canonical_unassigned or fallback_unassigned
+        if unassigned_path:
             unassigned_modules.append(
                 {
                     "id": f"unassigned:{domain}",
                     "name": domain,
                     "kind": "unassigned",
-                    "files": [canonical_unassigned],
+                    "files": [unassigned_path],
                 }
             )
 

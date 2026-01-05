@@ -141,13 +141,31 @@ def _parse_status_entries(output: str) -> list[dict[str, Any]]:
 
 
 def git_status_entries(include_ignored: bool = False) -> list[dict[str, Any]]:
-    args = ["status", "--porcelain=v1", "-z"]
+    args = ["status", "--porcelain=v1", "-z", "-uall"]
     if include_ignored:
         args.append("--ignored")
     result = run_git(args, check=False)
     if result.returncode != 0:
         return []
-    return _parse_status_entries(result.stdout)
+    entries = _parse_status_entries(result.stdout)
+    if not entries:
+        return entries
+    dir_paths = {entry["path"] for entry in entries if entry.get("is_dir")}
+    if not dir_paths:
+        return entries
+    child_paths = {entry["path"] for entry in entries if not entry.get("is_dir")}
+    skip_dirs = {
+        dir_path
+        for dir_path in dir_paths
+        if any(child.startswith(f"{dir_path}/") for child in child_paths)
+    }
+    if not skip_dirs:
+        return entries
+    return [
+        entry
+        for entry in entries
+        if not (entry.get("is_dir") and entry["path"] in skip_dirs)
+    ]
 
 
 def working_tree_clean() -> bool:
