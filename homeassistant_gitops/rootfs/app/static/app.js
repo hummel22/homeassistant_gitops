@@ -1,11 +1,21 @@
 const MAX_DIFF_LINES = 400;
 const MONACO_BASE = window.MONACO_BASE || "https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min";
 const MODULES_REFRESH_INTERVAL_MS = 10000;
+const FILE_PREVIEW_REF = "head";
 
 const state = {
   diffMode: "all",
   status: null,
   config: null,
+  gitTreeMode: "changed",
+  gitTreeIncludeIgnored: false,
+  gitTreeFiles: [],
+  gitTreeFilesByPath: {},
+  gitTreeSelections: {},
+  gitTreeOrder: [],
+  gitTreeExpanded: {},
+  lastGitTreeSelection: null,
+  filePreviewPath: null,
   branches: [],
   selectedBranch: null,
   commits: [],
@@ -43,6 +53,17 @@ const dom = {
   diffMode: document.getElementById("diff-mode"),
   stageAll: document.getElementById("stage-all"),
   unstageAll: document.getElementById("unstage-all"),
+  gitTree: document.getElementById("git-tree"),
+  gitTreeMode: document.getElementById("git-tree-mode"),
+  gitTreeIgnored: document.getElementById("git-tree-ignored"),
+  gitTreeSelection: document.getElementById("git-tree-selection"),
+  treeStageSelected: document.getElementById("tree-stage-selected"),
+  treeUnstageSelected: document.getElementById("tree-unstage-selected"),
+  fileViewer: document.getElementById("file-viewer"),
+  fileViewerMeta: document.getElementById("file-viewer-meta"),
+  fileViewerContent: document.getElementById("file-viewer-content"),
+  fileViewerClose: document.getElementById("file-viewer-close"),
+  fileViewerIgnore: document.getElementById("file-viewer-ignore"),
   branchSelect: document.getElementById("branch-select"),
   commitList: document.getElementById("commit-list"),
   commitMeta: document.getElementById("commit-meta"),
@@ -222,6 +243,9 @@ function setTab(tab) {
   if (tab === "groups") {
     loadGroupsData();
   }
+  if (tab === "git") {
+    loadGitFiles();
+  }
 }
 
 function isModulesTabActive() {
@@ -322,6 +346,16 @@ function renderStatus(data) {
   updateModulesStatus(Boolean(data.yaml_modules_enabled));
 }
 
+function setDiffMode(mode) {
+  state.diffMode = mode;
+  qsa("#diff-mode .segmented-btn").forEach((el) =>
+    el.classList.toggle("is-active", el.dataset.mode === mode)
+  );
+  if (state.status) {
+    renderDiffList(state.status.changes || []);
+  }
+}
+
 function matchesDiffMode(change) {
   if (state.diffMode === "staged") {
     return change.staged;
@@ -334,9 +368,9 @@ function matchesDiffMode(change) {
 
 function buildChangeLabel(change) {
   if (change.rename_from) {
-    return `${change.rename_from} -> ${change.path}`;
+    return `${change.rename_from} -> ${change.path}${change.is_dir ? "/" : ""}`;
   }
-  return change.path;
+  return `${change.path}${change.is_dir ? "/" : ""}`;
 }
 
 function isBinaryDiff(diffText) {
@@ -428,6 +462,7 @@ async function loadDiff(details, options) {
 function createDiffCard(change, context) {
   const details = document.createElement("details");
   details.className = "diff-card";
+  details.dataset.path = change.path;
 
   const summary = document.createElement("summary");
 
@@ -491,6 +526,26 @@ function createDiffCard(change, context) {
       });
       actions.append(unstageBtn);
     }
+    const viewBtn = document.createElement("button");
+    viewBtn.className = "btn";
+    viewBtn.textContent = "View file";
+    viewBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openFilePreview(change.path);
+    });
+    actions.append(viewBtn);
+
+    const ignoreBtn = document.createElement("button");
+    ignoreBtn.className = "btn";
+    ignoreBtn.textContent = "Ignore";
+    ignoreBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleGitignore(change.path, ignoreBtn);
+    });
+    actions.append(ignoreBtn);
+    updateIgnoreButton(ignoreBtn, change.path);
     summary.append(actions);
   }
 
@@ -503,6 +558,11 @@ function createDiffCard(change, context) {
 
   details.addEventListener("toggle", () => {
     if (!details.open) {
+      return;
+    }
+    if (change.is_dir && change.untracked) {
+      body.innerHTML = "<div class=\"diff-placeholder\">New directory (untracked).</div>";
+      details.dataset.loaded = "true";
       return;
     }
     if (context === "commit") {
@@ -542,12 +602,472 @@ function renderDiffList(changes) {
   });
 }
 
+function updateGitTreeSelectionCount() {
+  if (!dom.gitTreeSelection) {
+    return;
+  }
+  const count = Object.keys(state.gitTreeSelections).length;
+  dom.gitTreeSelection.textContent =
+    count === 0 ? "No files selected." : `${count} file${count === 1 ? "" : "s"} selected.`;
+  updateGitTreeActionButtons();
+}
+
+function updateGitTreeActionButtons() {
+  if (!dom.treeStageSelected || !dom.treeUnstageSelected) {
+    return;
+  }
+  const selections = Object.values(state.gitTreeSelections);
+  const canStage = selections.some((entry) => entry.unstaged || entry.untracked);
+  const canUnstage = selections.some((entry) => entry.staged);
+  dom.treeStageSelected.disabled = !canStage;
+  dom.treeUnstageSelected.disabled = !canUnstage;
+}
+
+function setGitTreeSelection(items) {
+  state.gitTreeSelections = {};
+  items.forEach((item) => {
+    state.gitTreeSelections[item.path] = item;
+  });
+  state.lastGitTreeSelection = items.length ? items[items.length - 1].path : null;
+  syncGitTreeSelectionUI();
+}
+
+function toggleGitTreeSelection(item) {
+  if (state.gitTreeSelections[item.path]) {
+    delete state.gitTreeSelections[item.path];
+  } else {
+    state.gitTreeSelections[item.path] = item;
+  }
+  state.lastGitTreeSelection = item.path;
+  syncGitTreeSelectionUI();
+}
+
+function selectGitTreeRange(targetPath) {
+  const order = state.gitTreeOrder || [];
+  if (!order.length) {
+    return;
+  }
+  const startPath = state.lastGitTreeSelection;
+  if (!startPath) {
+    return;
+  }
+  const startIndex = order.indexOf(startPath);
+  const endIndex = order.indexOf(targetPath);
+  if (startIndex < 0 || endIndex < 0) {
+    return;
+  }
+  const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+  const selection = order
+    .slice(from, to + 1)
+    .map((path) => state.gitTreeFilesByPath[path])
+    .filter(Boolean);
+  setGitTreeSelection(selection);
+}
+
+function syncGitTreeSelectionUI() {
+  if (!dom.gitTree) {
+    return;
+  }
+  qsa(".tree-row[data-selectable=\"true\"]", dom.gitTree).forEach((row) => {
+    row.classList.toggle("is-selected", Boolean(state.gitTreeSelections[row.dataset.path]));
+  });
+  updateGitTreeSelectionCount();
+}
+
+function handleTreeSelection(entry, event) {
+  const isRange = event.shiftKey;
+  const isToggle = event.metaKey || event.ctrlKey;
+  if (isRange) {
+    selectGitTreeRange(entry.path);
+  } else if (isToggle) {
+    toggleGitTreeSelection(entry);
+  } else {
+    setGitTreeSelection([entry]);
+  }
+  return { isRange, isToggle };
+}
+
+function buildTree(files) {
+  const root = { name: "", path: "", dirs: {}, files: [] };
+  files.forEach((entry) => {
+    if (!entry.path) {
+      return;
+    }
+    const parts = entry.path.split("/");
+    let current = root;
+    parts.forEach((part, index) => {
+      if (!part) {
+        return;
+      }
+      const isLast = index === parts.length - 1;
+      if (isLast) {
+        if (entry.is_dir) {
+          if (!current.dirs[part]) {
+            const nextPath = current.path ? `${current.path}/${part}` : part;
+            current.dirs[part] = { name: part, path: nextPath, dirs: {}, files: [], entry: null };
+          }
+          current.dirs[part].entry = entry;
+        } else {
+          current.files.push({ ...entry, name: part });
+        }
+      } else {
+        if (!current.dirs[part]) {
+          const nextPath = current.path ? `${current.path}/${part}` : part;
+          current.dirs[part] = { name: part, path: nextPath, dirs: {}, files: [], entry: null };
+        }
+        current = current.dirs[part];
+      }
+    });
+  });
+  return root;
+}
+
+function renderTreeNode(node, depth, order) {
+  const container = document.createElement("div");
+  const dirNames = Object.keys(node.dirs).sort();
+  dirNames.forEach((name) => {
+    const child = node.dirs[name];
+    const entry = child.entry || null;
+    const expanded =
+      state.gitTreeExpanded[child.path] === undefined
+        ? true
+        : state.gitTreeExpanded[child.path];
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    row.style.setProperty("--depth", depth);
+    row.dataset.kind = "dir";
+    row.dataset.path = child.path;
+    if (entry) {
+      row.dataset.selectable = "true";
+    }
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tree-toggle";
+    toggle.textContent = expanded ? "v" : ">";
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.gitTreeExpanded[child.path] = !expanded;
+      renderGitTree(state.gitTreeFiles);
+    });
+
+    const nameSpan = document.createElement("div");
+    nameSpan.className = "tree-name";
+    nameSpan.textContent = entry && entry.is_dir ? `${name}/` : name;
+
+    const icon = document.createElement("span");
+    icon.className = "material-symbols-outlined tree-icon";
+    icon.textContent = expanded ? "folder_open" : "folder";
+
+    row.append(toggle, icon, nameSpan);
+
+    if (entry) {
+      const chips = [];
+      if (entry.staged) {
+        chips.push(["staged", "Staged"]);
+      }
+      if (entry.unstaged) {
+        chips.push(["unstaged", "Unstaged"]);
+      }
+      if (entry.untracked) {
+        chips.push(["untracked", "Untracked"]);
+      }
+      if (entry.ignored) {
+        chips.push(["ignored", "Ignored"]);
+      }
+      if (!chips.length && entry.clean) {
+        chips.push(["clean", "Clean"]);
+      }
+      chips.forEach(([className, label]) => {
+        const chip = document.createElement("span");
+        chip.className = `tree-chip ${className}`;
+        chip.textContent = label;
+        row.append(chip);
+      });
+      row.addEventListener("click", (event) => {
+        const { isRange, isToggle } = handleTreeSelection(entry, event);
+        if (!isRange && !isToggle) {
+          scrollToDiff(entry);
+        }
+      });
+      order.push(entry.path);
+    } else {
+      row.addEventListener("click", () => {
+      state.gitTreeExpanded[child.path] = !expanded;
+      renderGitTree(state.gitTreeFiles);
+    });
+    }
+
+    container.append(row);
+
+    if (expanded) {
+      const childContainer = renderTreeNode(child, depth + 1, order);
+      container.append(childContainer);
+    }
+  });
+
+  const sortedFiles = node.files.sort((a, b) => a.name.localeCompare(b.name));
+  sortedFiles.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    row.style.setProperty("--depth", depth);
+    row.dataset.kind = "file";
+    row.dataset.path = entry.path;
+    row.dataset.selectable = "true";
+
+    const toggle = document.createElement("span");
+    toggle.className = "tree-toggle is-hidden";
+    toggle.textContent = "";
+
+    const icon = document.createElement("span");
+    icon.className = "material-symbols-outlined tree-icon";
+    icon.textContent = "description";
+
+    const nameSpan = document.createElement("div");
+    nameSpan.className = "tree-name";
+    nameSpan.textContent = entry.name;
+
+    row.append(toggle, icon, nameSpan);
+
+    const chips = [];
+    if (entry.staged) {
+      chips.push(["staged", "Staged"]);
+    }
+    if (entry.unstaged) {
+      chips.push(["unstaged", "Unstaged"]);
+    }
+    if (entry.untracked) {
+      chips.push(["untracked", "Untracked"]);
+    }
+    if (entry.ignored) {
+      chips.push(["ignored", "Ignored"]);
+    }
+    if (!chips.length && entry.clean) {
+      chips.push(["clean", "Clean"]);
+    }
+    chips.forEach(([className, label]) => {
+      const chip = document.createElement("span");
+      chip.className = `tree-chip ${className}`;
+      chip.textContent = label;
+      row.append(chip);
+    });
+
+    row.addEventListener("click", (event) => {
+      const { isRange, isToggle } = handleTreeSelection(entry, event);
+      if (!isRange && !isToggle) {
+        if (entry.staged || entry.unstaged || entry.untracked) {
+          scrollToDiff(entry);
+        } else {
+          openFilePreview(entry.path);
+        }
+      }
+    });
+    container.append(row);
+    order.push(entry.path);
+  });
+
+  return container;
+}
+
+function renderGitTree(files) {
+  if (!dom.gitTree) {
+    return;
+  }
+  dom.gitTree.innerHTML = "";
+  if (!files.length) {
+    state.gitTreeSelections = {};
+    state.gitTreeOrder = [];
+    updateGitTreeSelectionCount();
+    dom.gitTree.innerHTML = "<div class=\"diff-placeholder\">No files found.</div>";
+    return;
+  }
+  const tree = buildTree(files);
+  const order = [];
+  const container = renderTreeNode(tree, 0, order);
+  dom.gitTree.append(container);
+  state.gitTreeOrder = order;
+  syncGitTreeSelectionUI();
+}
+
+async function loadGitFiles() {
+  if (!dom.gitTree) {
+    return;
+  }
+  const mode = state.gitTreeMode;
+  const includeIgnored = state.gitTreeIncludeIgnored;
+  dom.gitTree.innerHTML = "<div class=\"diff-placeholder\">Loading files...</div>";
+  try {
+    const data = await requestJSON(
+      `/api/git/files?mode=${encodeURIComponent(mode)}&include_ignored=${includeIgnored}`
+    );
+    const files = data.files || [];
+    const byPath = {};
+    files.forEach((entry) => {
+      byPath[entry.path] = entry;
+    });
+    state.gitTreeFiles = files;
+    state.gitTreeFilesByPath = byPath;
+    state.gitTreeSelections = Object.fromEntries(
+      Object.entries(state.gitTreeSelections).filter(([path]) => byPath[path])
+    );
+    renderGitTree(files);
+  } catch (err) {
+    dom.gitTree.innerHTML = `<div class="diff-placeholder">${err.message}</div>`;
+  }
+}
+
+function escapeSelector(value) {
+  const str = String(value);
+
+  // Browser-safe AND SSR/Node-safe
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(str);
+  }
+
+  // Fallback: handle a few important CSS identifier edge cases
+  return str
+    .replace(/\0/g, "\uFFFD") // NULL isn't allowed; replace it
+    // If it starts with a digit, or "-digit", escape the digit as a hex codepoint (\30 .. \39)
+    .replace(/^(-?\d)/, (m) => (m[0] === "-" ? `-\\3${m[1]} ` : `\\3${m[0]} `))
+    .replace(/^-$/, "\\-") // lone "-" is special
+    // Then escape anything that's not a typical identifier char
+    .replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+}
+
+function openDiffCard(path) {
+  if (!dom.diffList) {
+    return;
+  }
+  const selector = `.diff-card[data-path="${escapeSelector(path)}"]`;
+  const card = qs(selector, dom.diffList);
+  if (!card) {
+    return;
+  }
+  card.open = true;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function scrollToDiff(entry) {
+  if (!entry) {
+    return;
+  }
+  let nextMode = state.diffMode;
+  if (entry.staged && state.diffMode === "unstaged") {
+    nextMode = "all";
+  }
+  if ((entry.unstaged || entry.untracked) && state.diffMode === "staged") {
+    nextMode = "all";
+  }
+  if (nextMode !== state.diffMode) {
+    setDiffMode(nextMode);
+    setTimeout(() => openDiffCard(entry.path), 0);
+    return;
+  }
+  openDiffCard(entry.path);
+}
+
+async function updateIgnoreButton(button, path) {
+  if (!button) {
+    return;
+  }
+  button.disabled = true;
+  button.dataset.path = path;
+  button.dataset.ignored = "false";
+  button.textContent = "Ignore";
+  try {
+    const status = await requestJSON(
+      `/api/gitignore/status?path=${encodeURIComponent(path)}`
+    );
+    button.dataset.ignored = status.ignored ? "true" : "false";
+    button.textContent = status.ignored ? "Unignore" : "Ignore";
+  } catch (err) {
+    button.textContent = "Ignore";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function toggleGitignore(path, button) {
+  if (!path) {
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const data = await requestJSON("/api/gitignore/toggle", {
+      method: "POST",
+      body: JSON.stringify({ path, action: "toggle" }),
+    });
+    let message = data.message || "Updated .gitignore";
+    if (data.tracked) {
+      message = `${message} (Tracked files still show diffs.)`;
+    }
+    showToast(message);
+    await loadStatus();
+    if (button) {
+      await updateIgnoreButton(button, path);
+    }
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+function closeFilePreview() {
+  if (!dom.fileViewer) {
+    return;
+  }
+  dom.fileViewer.classList.add("is-hidden");
+  dom.fileViewerContent.textContent = "";
+  dom.fileViewerMeta.textContent = "";
+  state.filePreviewPath = null;
+}
+
+async function openFilePreview(path) {
+  if (!dom.fileViewer || !dom.fileViewerContent || !dom.fileViewerMeta) {
+    return;
+  }
+  state.filePreviewPath = path;
+  dom.fileViewer.classList.remove("is-hidden");
+  dom.fileViewerMeta.textContent = "Loading preview...";
+  dom.fileViewerContent.textContent = "";
+  if (dom.fileViewerIgnore) {
+    updateIgnoreButton(dom.fileViewerIgnore, path);
+  }
+  try {
+    const data = await requestJSON(
+      `/api/git/file?path=${encodeURIComponent(path)}&ref=${FILE_PREVIEW_REF}`
+    );
+    const meta = [`${data.path}`];
+    if (typeof data.size_bytes === "number") {
+      meta.push(`${data.size_bytes} bytes`);
+    }
+    if (data.truncated) {
+      meta.push("truncated");
+    }
+    dom.fileViewerMeta.textContent = meta.join(" | ");
+    if (data.is_binary) {
+      dom.fileViewerContent.textContent = "Binary file; preview not available.";
+      return;
+    }
+    dom.fileViewerContent.textContent = data.content || "";
+  } catch (err) {
+    dom.fileViewerMeta.textContent = "Unable to load preview.";
+    dom.fileViewerContent.textContent = err.message;
+  }
+}
+
 async function loadStatus() {
   try {
     const data = await requestJSON("/api/status");
     state.status = data;
     renderStatus(data);
     renderDiffList(data.changes || []);
+    await loadGitFiles();
   } catch (err) {
     dom.statusMessage.textContent = err.message;
   }
@@ -2502,16 +3022,52 @@ function bindEvents() {
     const files = changes.filter((change) => change.staged).map((change) => change.path);
     unstageFiles(files);
   });
+  if (dom.treeStageSelected) {
+    dom.treeStageSelected.addEventListener("click", () => {
+      const selections = Object.values(state.gitTreeSelections);
+      const files = selections
+        .filter((entry) => entry.unstaged || entry.untracked)
+        .map((entry) => entry.path);
+      stageFiles(files);
+    });
+  }
+  if (dom.treeUnstageSelected) {
+    dom.treeUnstageSelected.addEventListener("click", () => {
+      const selections = Object.values(state.gitTreeSelections);
+      const files = selections.filter((entry) => entry.staged).map((entry) => entry.path);
+      unstageFiles(files);
+    });
+  }
+  qsa("#git-tree-mode .segmented-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.gitTreeMode = btn.dataset.mode;
+      qsa("#git-tree-mode .segmented-btn").forEach((el) =>
+        el.classList.toggle("is-active", el === btn)
+      );
+      loadGitFiles();
+    });
+  });
+  if (dom.gitTreeIgnored) {
+    dom.gitTreeIgnored.addEventListener("change", () => {
+      state.gitTreeIncludeIgnored = dom.gitTreeIgnored.checked;
+      loadGitFiles();
+    });
+  }
+  if (dom.fileViewerClose) {
+    dom.fileViewerClose.addEventListener("click", closeFilePreview);
+  }
+  if (dom.fileViewerIgnore) {
+    dom.fileViewerIgnore.addEventListener("click", () => {
+      const path = state.filePreviewPath || dom.fileViewerIgnore.dataset.path;
+      if (path) {
+        toggleGitignore(path, dom.fileViewerIgnore);
+      }
+    });
+  }
 
   qsa("#diff-mode .segmented-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.diffMode = btn.dataset.mode;
-      qsa("#diff-mode .segmented-btn").forEach((el) =>
-        el.classList.toggle("is-active", el === btn)
-      );
-      if (state.status) {
-        renderDiffList(state.status.changes || []);
-      }
+      setDiffMode(btn.dataset.mode);
     });
   });
 

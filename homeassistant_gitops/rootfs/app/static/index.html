@@ -79,20 +79,55 @@
           </div>
         </div>
 
-        <div class="card diff-toolbar">
-          <div class="card-header">Working Tree Diffs</div>
-          <div class="toolbar-row">
-            <div id="diff-mode" class="segmented" role="tablist">
-              <button class="segmented-btn is-active" data-mode="all">All</button>
-              <button class="segmented-btn" data-mode="staged">Staged</button>
-              <button class="segmented-btn" data-mode="unstaged">Unstaged</button>
+        <div class="git-grid git-diff-grid">
+          <aside class="card git-tree-card">
+            <div class="card-header">Files</div>
+            <div class="toolbar-row git-tree-toolbar">
+              <div id="git-tree-mode" class="segmented" role="tablist">
+                <button class="segmented-btn is-active" data-mode="changed">Changed</button>
+                <button class="segmented-btn" data-mode="all">All files</button>
+              </div>
+              <label class="checkbox-row">
+                <input id="git-tree-ignored" type="checkbox" />
+                <span>Show ignored</span>
+              </label>
             </div>
             <div class="button-row">
-              <button id="stage-all" class="btn">Stage all</button>
-              <button id="unstage-all" class="btn">Unstage all</button>
+              <button id="tree-stage-selected" class="btn" disabled>Stage selected</button>
+              <button id="tree-unstage-selected" class="btn" disabled>Unstage selected</button>
             </div>
-          </div>
-          <div id="diff-list" class="diff-list"></div>
+            <div id="git-tree-selection" class="note">No files selected.</div>
+            <div id="git-tree" class="file-tree" role="tree"></div>
+          </aside>
+
+          <section class="card diff-toolbar">
+            <div class="card-header">Working Tree Diffs</div>
+            <div class="toolbar-row">
+              <div id="diff-mode" class="segmented" role="tablist">
+                <button class="segmented-btn is-active" data-mode="all">All</button>
+                <button class="segmented-btn" data-mode="staged">Staged</button>
+                <button class="segmented-btn" data-mode="unstaged">Unstaged</button>
+              </div>
+              <div class="button-row">
+                <button id="stage-all" class="btn">Stage all</button>
+                <button id="unstage-all" class="btn">Unstage all</button>
+              </div>
+            </div>
+            <div id="file-viewer" class="file-viewer is-hidden">
+              <div class="file-viewer-header">
+                <div>
+                  <div class="file-viewer-title">File preview (HEAD)</div>
+                  <div id="file-viewer-meta" class="note"></div>
+                </div>
+                <div class="button-row">
+                  <button id="file-viewer-ignore" class="btn">Ignore</button>
+                  <button id="file-viewer-close" class="btn">Close</button>
+                </div>
+              </div>
+              <pre id="file-viewer-content" class="file-viewer-content"></pre>
+            </div>
+            <div id="diff-list" class="diff-list"></div>
+          </section>
         </div>
       </section>
 

@@ -697,6 +697,25 @@ def _write_yaml(path: Path, data: Any, preview: dict[str, str] | None) -> bool:
     return True
 
 
+def _is_empty_yaml_payload(data: Any) -> bool:
+    return data is None or data == [] or data == {}
+
+
+def _write_domain_yaml(path: Path, data: Any, preview: dict[str, str] | None) -> bool:
+    if _is_empty_yaml_payload(data):
+        rel_path = path.relative_to(settings.CONFIG_DIR).as_posix()
+        if preview is not None:
+            if path.exists():
+                preview[rel_path] = ""
+                return True
+            return False
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+    return _write_yaml(path, data, preview)
+
+
 def _write_text(path: Path, content: str, preview: dict[str, str] | None) -> bool:
     if preview is not None:
         rel_path = path.relative_to(settings.CONFIG_DIR).as_posix()
@@ -1254,7 +1273,7 @@ def _sync_list_domain(
             combined.append(item.expanded)
     if write_modules:
         changed_files.extend(_write_template_diffs(template_edits, warnings, preview))
-    if write_domain and _write_yaml(spec.domain_file, combined, preview):
+    if write_domain and _write_domain_yaml(spec.domain_file, combined, preview):
         changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
 
     entries: list[dict[str, Any]] = []
@@ -1502,7 +1521,7 @@ def _sync_mapping_domain(
             combined[item.ha_id] = item.expanded
     if write_modules:
         changed_files.extend(_write_template_diffs(template_edits, warnings, preview))
-    if write_domain and _write_yaml(spec.domain_file, combined, preview):
+    if write_domain and _write_domain_yaml(spec.domain_file, combined, preview):
         changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
 
     entries: list[dict[str, Any]] = []
@@ -1773,7 +1792,7 @@ def _sync_lovelace_domain(
     domain_payload: dict[str, Any] = {"views": combined_views, **meta_payload}
     if write_modules:
         changed_files.extend(_write_template_diffs(template_edits, warnings, preview))
-    if write_domain and _write_yaml(spec.domain_file, domain_payload, preview):
+    if write_domain and _write_domain_yaml(spec.domain_file, domain_payload, preview):
         changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
 
     entries: list[dict[str, Any]] = []
@@ -3394,17 +3413,17 @@ def operate_module_items(
                     spec.domain_file, spec, selectors, warnings, allow_fingerprint_only=True
                 )
                 _ = domain_items
-                _write_yaml(spec.domain_file, domain_updated, preview=None)
+                _write_domain_yaml(spec.domain_file, domain_updated, preview=None)
                 changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
             elif kind == "mapping" and spec:
                 _removed, domain_updated = _remove_mapping_items(spec.domain_file, selectors)
-                _write_yaml(spec.domain_file, domain_updated, preview=None)
+                _write_domain_yaml(spec.domain_file, domain_updated, preview=None)
                 changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
             elif kind == "lovelace" and spec:
                 _removed, domain_updated = _remove_lovelace_items(
                     spec.domain_file, spec, selectors, warnings, allow_fingerprint_only=True
                 )
-                _write_yaml(spec.domain_file, domain_updated, preview=None)
+                _write_domain_yaml(spec.domain_file, domain_updated, preview=None)
                 changed_files.append(spec.domain_file.relative_to(settings.CONFIG_DIR).as_posix())
             elif kind == "helpers":
                 for selector in selectors:

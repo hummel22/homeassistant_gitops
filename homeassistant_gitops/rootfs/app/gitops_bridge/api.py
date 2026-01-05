@@ -21,6 +21,7 @@ from . import (
     exports,
     groups,
     git_ops,
+    gitignore_ops,
     ha_services,
     settings,
     ssh_ops,
@@ -179,6 +180,101 @@ async def api_diff(
         raise HTTPException(status_code=400, detail="Invalid diff mode")
     diff_data = git_ops.git_diff(path, mode=mode, max_lines=max_lines, untracked=untracked)
     return JSONResponse({"path": path, "mode": mode, **diff_data})
+
+
+@app.get("/api/git/files")
+async def api_git_files(mode: str = "changed", include_ignored: bool = False) -> JSONResponse:
+    try:
+        files = git_ops.git_list_files(mode=mode, include_ignored=include_ignored)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"mode": mode, "files": files})
+
+
+@app.get("/api/git/file")
+async def api_git_file(path: str, ref: str = "head") -> JSONResponse:
+    try:
+        preview = git_ops.git_file_preview(path, ref=ref)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in HEAD") from None
+    return JSONResponse(preview)
+
+
+@app.get("/api/gitignore/status")
+async def api_gitignore_status(path: str) -> JSONResponse:
+    try:
+        status = git_ops.git_check_ignore(path)
+        managed_entries = set(gitignore_ops.managed_block_entries())
+        tracked = git_ops.git_is_tracked(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ignore_line = status.get("path")
+    managed_ignore = ignore_line in managed_entries
+    managed_override = f"!{ignore_line}" in managed_entries
+    return JSONResponse(
+        {
+            "path": status.get("path", path),
+            "ignored": bool(status.get("ignored", False)),
+            "tracked": tracked,
+            "managed": managed_ignore,
+            "managed_override": managed_override,
+            "source": status.get("source"),
+            "pattern": status.get("pattern"),
+        }
+    )
+
+
+@app.post("/api/gitignore/toggle")
+async def api_gitignore_toggle(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    path = payload.get("path")
+    action = (payload.get("action") or "toggle").lower()
+    if action not in {"toggle", "ignore", "unignore"}:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    try:
+        status = git_ops.git_check_ignore(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if action == "toggle":
+        action = "unignore" if status.get("ignored") else "ignore"
+
+    changed = False
+    message = ""
+    if action == "ignore":
+        changed = gitignore_ops.update_managed_block(status["path"], "ignore")
+        message = "Added to .gitignore" if changed else "Already ignored in managed block"
+    else:
+        changed = gitignore_ops.update_managed_block(status["path"], "unignore")
+        try:
+            post_status = git_ops.git_check_ignore(status["path"])
+        except ValueError:
+            post_status = {"ignored": False}
+        if post_status.get("ignored"):
+            override_changed = gitignore_ops.update_managed_block(status["path"], "override")
+            changed = changed or override_changed
+            message = (
+                "Added override to .gitignore"
+                if override_changed
+                else "Override already present in .gitignore"
+            )
+        else:
+            message = "Removed from .gitignore" if changed else "No .gitignore update needed"
+
+    try:
+        final_status = git_ops.git_check_ignore(status["path"])
+    except ValueError:
+        final_status = {"ignored": False}
+
+    return JSONResponse(
+        {
+            "path": status["path"],
+            "ignored": bool(final_status.get("ignored", False)),
+            "changed": changed,
+            "message": message,
+            "tracked": git_ops.git_is_tracked(status["path"]),
+        }
+    )
 
 
 @app.post("/api/stage")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 
 from fastapi import HTTPException
@@ -9,12 +10,24 @@ from fastapi import HTTPException
 from . import settings
 from .gitignore_ops import ensure_gitignore
 
+MAX_FILE_PREVIEW_BYTES = 512 * 1024
+
 
 def run_git(args: Iterable[str], check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
         cwd=settings.CONFIG_DIR,
         text=True,
+        capture_output=True,
+        check=check,
+    )
+
+
+def run_git_bytes(args: Iterable[str], check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=settings.CONFIG_DIR,
+        text=False,
         capture_output=True,
         check=check,
     )
@@ -67,6 +80,74 @@ def ensure_remote(remote_url: str | None) -> None:
         run_git(["remote", "add", "origin", remote_url])
     else:
         run_git(["remote", "set-url", "origin", remote_url])
+
+
+def normalize_repo_path(path: str) -> str:
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("Path required")
+    candidate = Path(path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError("Invalid path")
+    resolved = (settings.CONFIG_DIR / candidate).resolve()
+    config_root = settings.CONFIG_DIR.resolve()
+    if not resolved.is_relative_to(config_root):
+        raise ValueError("Invalid path")
+    return resolved.relative_to(config_root).as_posix()
+
+
+def _parse_status_entries(output: str) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    entries = output.split("\0")
+    idx = 0
+    while idx < len(entries):
+        entry = entries[idx]
+        if not entry:
+            idx += 1
+            continue
+        status = entry[:2]
+        path = entry[3:] if len(entry) > 3 else ""
+        rename_from = None
+        if status[0] in {"R", "C"}:
+            rename_from = path
+            idx += 1
+            if idx >= len(entries):
+                break
+            path = entries[idx]
+        is_dir = False
+        if path.endswith("/"):
+            is_dir = True
+            path = path.rstrip("/")
+        ignored = status == "!!"
+        untracked = status == "??"
+        staged = False
+        unstaged = False
+        if not ignored and not untracked:
+            staged = status[0] not in {" ", "?"}
+            unstaged = status[1] not in {" ", "?"}
+        changes.append(
+            {
+                "status": status,
+                "path": path,
+                "staged": staged,
+                "unstaged": unstaged,
+                "untracked": untracked,
+                "ignored": ignored,
+                "is_dir": is_dir,
+                "rename_from": rename_from,
+            }
+        )
+        idx += 1
+    return changes
+
+
+def git_status_entries(include_ignored: bool = False) -> list[dict[str, Any]]:
+    args = ["status", "--porcelain=v1", "-z"]
+    if include_ignored:
+        args.append("--ignored")
+    result = run_git(args, check=False)
+    if result.returncode != 0:
+        return []
+    return _parse_status_entries(result.stdout)
 
 
 def working_tree_clean() -> bool:
@@ -122,41 +203,155 @@ def get_remote_status(remote_url: str | None, remote_branch: str, refresh: bool 
 
 
 def git_status() -> list[dict[str, Any]]:
-    result = run_git(["status", "--porcelain=v1", "-z"], check=False)
-    changes: list[dict[str, Any]] = []
-    if result.returncode != 0:
-        return changes
-    entries = result.stdout.split("\0")
-    idx = 0
-    while idx < len(entries):
-        entry = entries[idx]
-        if not entry:
-            idx += 1
+    return git_status_entries(include_ignored=False)
+
+
+def git_list_files(mode: str = "changed", include_ignored: bool = False) -> list[dict[str, Any]]:
+    mode = (mode or "changed").lower()
+    if mode not in {"changed", "all"}:
+        raise ValueError("Invalid file list mode")
+
+    if mode == "changed":
+        changes = git_status_entries(include_ignored=include_ignored)
+        files = []
+        for change in changes:
+            if change["ignored"] and not include_ignored:
+                continue
+            clean = not (
+                change["staged"]
+                or change["unstaged"]
+                or change["untracked"]
+                or change["ignored"]
+            )
+            files.append({**change, "clean": clean})
+        return files
+
+    tracked_result = run_git(["ls-files", "-z"], check=False)
+    tracked = [entry for entry in tracked_result.stdout.split("\0") if entry]
+    files: dict[str, dict[str, Any]] = {}
+    for path in tracked:
+        files[path] = {
+            "status": "  ",
+            "path": path,
+            "staged": False,
+            "unstaged": False,
+            "untracked": False,
+            "ignored": False,
+            "is_dir": False,
+            "rename_from": None,
+            "clean": True,
+        }
+
+    for change in git_status_entries(include_ignored=include_ignored):
+        if change["ignored"] and not include_ignored:
             continue
-        status = entry[:2]
-        path = entry[3:] if len(entry) > 3 else ""
-        rename_from = None
-        if status[0] in {"R", "C"}:
-            rename_from = path
-            idx += 1
-            if idx >= len(entries):
-                break
-            path = entries[idx]
-        staged = status[0] not in {" ", "?"}
-        unstaged = status[1] not in {" ", "?"}
-        untracked = status == "??"
-        changes.append(
-            {
-                "status": status,
-                "path": path,
-                "staged": staged,
-                "unstaged": unstaged,
-                "untracked": untracked,
-                "rename_from": rename_from,
+        entry = files.get(change["path"])
+        if not entry:
+            entry = {
+                "status": change["status"],
+                "path": change["path"],
+                "staged": False,
+                "unstaged": False,
+                "untracked": False,
+                "ignored": False,
+                "is_dir": change.get("is_dir", False),
+                "rename_from": None,
+                "clean": True,
             }
+            files[change["path"]] = entry
+        entry["status"] = change["status"]
+        entry["staged"] = bool(change["staged"])
+        entry["unstaged"] = bool(change["unstaged"])
+        entry["untracked"] = bool(change["untracked"])
+        entry["ignored"] = bool(change["ignored"])
+        entry["is_dir"] = bool(change.get("is_dir", False))
+        entry["rename_from"] = change.get("rename_from")
+        entry["clean"] = not (
+            entry["staged"] or entry["unstaged"] or entry["untracked"] or entry["ignored"]
         )
-        idx += 1
-    return changes
+
+    return [files[path] for path in sorted(files)]
+
+
+def git_check_ignore(path: str) -> dict[str, Any]:
+    rel_path = normalize_repo_path(path)
+    result = run_git(["check-ignore", "-v", "--", rel_path], check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return {"path": rel_path, "ignored": False}
+    line = result.stdout.strip().splitlines()[0]
+    source = ""
+    pattern = ""
+    line_number = None
+    if "\t" in line:
+        source_block, match_path = line.split("\t", 1)
+    else:
+        source_block, match_path = line, rel_path
+    if source_block.count(":") >= 2:
+        source, line_part, pattern = source_block.split(":", 2)
+        if line_part.isdigit():
+            line_number = int(line_part)
+    return {
+        "path": rel_path,
+        "ignored": True,
+        "source": source,
+        "line": line_number,
+        "pattern": pattern,
+        "match": match_path,
+    }
+
+
+def git_is_tracked(path: str) -> bool:
+    rel_path = normalize_repo_path(path)
+    result = run_git(["ls-files", "--error-unmatch", "--", rel_path], check=False)
+    return result.returncode == 0
+
+
+def _read_worktree_bytes(path: Path) -> tuple[bytes, int]:
+    size_bytes = path.stat().st_size
+    with path.open("rb") as handle:
+        data = handle.read(MAX_FILE_PREVIEW_BYTES + 1)
+    return data, size_bytes
+
+
+def _read_head_bytes(rel_path: str) -> tuple[bytes, int]:
+    result = run_git_bytes(["show", f"HEAD:{rel_path}"], check=False)
+    if result.returncode != 0:
+        raise FileNotFoundError(rel_path)
+    data = result.stdout or b""
+    return data, len(data)
+
+
+def git_file_preview(path: str, ref: str = "worktree") -> dict[str, Any]:
+    rel_path = normalize_repo_path(path)
+    ref = (ref or "worktree").lower()
+    if ref not in {"worktree", "head"}:
+        raise ValueError("Invalid ref")
+    if ref == "head":
+        data, size_bytes = _read_head_bytes(rel_path)
+    else:
+        worktree_path = settings.CONFIG_DIR / rel_path
+        if not worktree_path.exists():
+            raise FileNotFoundError(rel_path)
+        data, size_bytes = _read_worktree_bytes(worktree_path)
+    truncated = len(data) > MAX_FILE_PREVIEW_BYTES
+    if truncated:
+        data = data[:MAX_FILE_PREVIEW_BYTES]
+    is_binary = b"\0" in data
+    content = ""
+    if not is_binary:
+        try:
+            content = data.decode("utf-8")
+        except UnicodeDecodeError:
+            is_binary = True
+            content = ""
+    return {
+        "path": rel_path,
+        "ref": ref,
+        "is_binary": is_binary,
+        "truncated": truncated,
+        "size_bytes": size_bytes,
+        "content": content,
+    }
 
 
 def git_log(limit: int = 20) -> list[dict[str, str]]:
