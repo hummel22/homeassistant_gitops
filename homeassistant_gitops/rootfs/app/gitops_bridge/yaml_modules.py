@@ -725,15 +725,20 @@ def _list_module_files(spec: DomainSpec) -> list[Path]:
 
 def _load_sync_state() -> tuple[dict[str, Any], list[str]]:
     if not settings.SYNC_STATE_PATH.exists():
-        return {"schema_version": 1, "domains": {}}, []
+        return {"schema_version": 1, "domains": {}, "has_run": False}, []
     try:
         data = yaml.safe_load(read_text(settings.SYNC_STATE_PATH)) or {}
     except yaml.YAMLError as exc:
-        return {"schema_version": 1, "domains": {}}, [f"{settings.SYNC_STATE_PATH}: {exc}"]
+        return {
+            "schema_version": 1,
+            "domains": {},
+            "has_run": False,
+        }, [f"{settings.SYNC_STATE_PATH}: {exc}"]
     if not isinstance(data, dict):
-        return {"schema_version": 1, "domains": {}}, []
+        return {"schema_version": 1, "domains": {}, "has_run": False}, []
     data.setdefault("schema_version", 1)
     data.setdefault("domains", {})
+    data.setdefault("has_run", False)
     if not isinstance(data["domains"], dict):
         data["domains"] = {}
     return data, []
@@ -2427,7 +2432,15 @@ def sync_yaml_modules() -> dict[str, Any]:
     _maybe_migrate_automation_markers(warnings)
     state, state_warnings = _load_sync_state()
     warnings.extend(state_warnings)
+    first_run = not state.get("has_run", False)
     changed_files.extend(_sync_yaml_modules_state(state, warnings))
+    if first_run:
+        warnings = [
+            warning
+            for warning in warnings
+            if "missing from modules; keeping domain version." not in warning
+        ]
+    state["has_run"] = True
     _save_sync_state(state)
     return {
         "status": "synced",
@@ -2443,6 +2456,7 @@ def build_yaml_modules() -> dict[str, Any]:
     _maybe_migrate_automation_markers(warnings)
     state, state_warnings = _load_sync_state()
     warnings.extend(state_warnings)
+    first_run = not state.get("has_run", False)
     changed_files.extend(
         _sync_yaml_modules_state(
             state,
@@ -2451,6 +2465,13 @@ def build_yaml_modules() -> dict[str, Any]:
             write_mode="domain",
         )
     )
+    if first_run:
+        warnings = [
+            warning
+            for warning in warnings
+            if "missing from modules; keeping domain version." not in warning
+        ]
+    state["has_run"] = True
     _save_sync_state(state)
     return {
         "status": "built",
@@ -2466,6 +2487,7 @@ def update_yaml_modules() -> dict[str, Any]:
     _maybe_migrate_automation_markers(warnings)
     state, state_warnings = _load_sync_state()
     warnings.extend(state_warnings)
+    first_run = not state.get("has_run", False)
     changed_files.extend(
         _sync_yaml_modules_state(
             state,
@@ -2474,6 +2496,13 @@ def update_yaml_modules() -> dict[str, Any]:
             write_mode="modules",
         )
     )
+    if first_run:
+        warnings = [
+            warning
+            for warning in warnings
+            if "missing from modules; keeping domain version." not in warning
+        ]
+    state["has_run"] = True
     _save_sync_state(state)
     return {
         "status": "updated",

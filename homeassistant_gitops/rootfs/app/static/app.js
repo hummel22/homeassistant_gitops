@@ -177,6 +177,27 @@ function showToast(message) {
   }, 3200);
 }
 
+function isDarkTheme() {
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "dark") {
+    return true;
+  }
+  if (theme === "light") {
+    return false;
+  }
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function applyDiffTheme(container) {
+  qsa(".d2h-wrapper", container).forEach((wrapper) => {
+    wrapper.classList.toggle("d2h-dark-color-scheme", isDarkTheme());
+  });
+}
+
+function updateDiffTheme() {
+  applyDiffTheme(document);
+}
+
 async function requestJSON(url, options = {}) {
   const headers = options.headers || {};
   if (!(options.body instanceof FormData)) {
@@ -198,6 +219,7 @@ async function requestJSON(url, options = {}) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme || "system";
   setEditorTheme();
+  updateDiffTheme();
 }
 
 function getEditorTheme() {
@@ -435,6 +457,7 @@ async function loadDiff(details, options) {
           drawFileList: false,
           matching: "lines",
         });
+        applyDiffTheme(body);
       }
     }
 
@@ -2954,6 +2977,7 @@ function createPreviewDiffCard(entry) {
           drawFileList: false,
           matching: "lines",
         });
+        applyDiffTheme(body);
       })
       .catch((err) => {
         body.innerHTML = `<div class=\"diff-placeholder\">${err.message}</div>`;
