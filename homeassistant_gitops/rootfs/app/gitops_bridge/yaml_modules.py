@@ -447,6 +447,16 @@ def _contains_template_includes(value: Any) -> bool:
     return False
 
 
+def _contains_tagged_values(value: Any) -> bool:
+    if isinstance(value, TaggedValue):
+        return True
+    if isinstance(value, dict):
+        return any(_contains_tagged_values(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_tagged_values(child) for child in value)
+    return False
+
+
 def _merge_domain_value_preserving_templates(
     module_value: Any,
     domain_value: Any,
@@ -707,6 +717,60 @@ def _sanitize_lovelace_path(value: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() or ch in {"-", "_"} else "-" for ch in cleaned)
     cleaned = cleaned.strip("-")
     return cleaned or "view"
+
+
+_LOVELACE_DASHBOARD_PACKAGE_RE = re.compile(r"^lovelace\.(.+)\.ya?ml$", re.IGNORECASE)
+_LOVELACE_DASHBOARD_UNASSIGNED_RE = re.compile(
+    r"^lovelace\.(.+)\.unassigned\.ya?ml$",
+    re.IGNORECASE,
+)
+
+
+def _parse_lovelace_dashboard_id_from_filename(filename: str) -> str | None:
+    match = _LOVELACE_DASHBOARD_PACKAGE_RE.match(filename)
+    if not match:
+        return None
+    dashboard_id = match.group(1)
+    if not dashboard_id or dashboard_id.endswith(".unassigned"):
+        return None
+    return dashboard_id
+
+
+def _parse_lovelace_dashboard_id_from_unassigned_filename(filename: str) -> str | None:
+    match = _LOVELACE_DASHBOARD_UNASSIGNED_RE.match(filename)
+    if not match:
+        return None
+    dashboard_id = match.group(1)
+    if not dashboard_id:
+        return None
+    return dashboard_id
+
+
+def _load_storage_json(path: Path, warnings: list[str]) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        warnings.append(f"{path.relative_to(settings.CONFIG_DIR)}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        warnings.append(f"{path.relative_to(settings.CONFIG_DIR)} is not a JSON object.")
+        return None
+    return data
+
+
+def _render_storage_json(data: dict[str, Any]) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _write_storage_json_if_changed(path: Path, data: dict[str, Any]) -> bool:
+    rendered = _render_storage_json(data)
+    if rendered == read_text(path):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered, encoding="utf-8")
+    return True
 
 
 def _list_module_files(spec: DomainSpec) -> list[Path]:
@@ -1156,6 +1220,8 @@ def _sync_list_domain(
     write_mode: str = "all",
 ) -> list[str]:
     changed_files: list[str] = []
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
+    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     module_files = _list_module_files(spec)
     template_edits: list[TemplateEditCandidate] = []
     module_used_ids: set[str] | None = None
@@ -1216,8 +1282,6 @@ def _sync_list_domain(
     if not domain_valid and not module_items_by_file:
         return changed_files
 
-    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
-    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
 
@@ -1420,6 +1484,8 @@ def _sync_mapping_domain(
     write_mode: str = "all",
 ) -> list[str]:
     changed_files: list[str] = []
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
+    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     module_files = _list_module_files(spec)
     template_edits: list[TemplateEditCandidate] = []
     resolve_ha_includes = spec.key == "group"
@@ -1460,8 +1526,6 @@ def _sync_mapping_domain(
     if not domain_valid and not module_items_by_file:
         return changed_files
 
-    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
-    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
 
@@ -1668,6 +1732,8 @@ def _sync_lovelace_domain(
     write_mode: str = "all",
 ) -> list[str]:
     changed_files: list[str] = []
+    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
+    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     module_files = _list_module_files(spec)
     template_edits: list[TemplateEditCandidate] = []
     lovelace_modules: dict[str, LovelaceModule] = {}
@@ -1710,8 +1776,6 @@ def _sync_lovelace_domain(
     if not domain_valid and not lovelace_modules:
         return changed_files
 
-    unassigned_path = _ensure_unassigned_path(spec.module_dir, spec, warnings, preview)
-    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(spec.key, unassigned_rel)
     warnings.extend(mapping_warnings)
 
@@ -1939,6 +2003,9 @@ def _sync_helpers(
 ) -> list[str]:
     changed_files: list[str] = []
     template_edits: list[TemplateEditCandidate] = []
+    helpers_dir = settings.CONFIG_DIR / "helpers"
+    unassigned_path = _ensure_unassigned_path(helpers_dir, None, warnings, preview)
+    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     module_files: list[Path] = []
     if settings.PACKAGES_DIR.exists():
         for package_dir in sorted(settings.PACKAGES_DIR.iterdir()):
@@ -1947,7 +2014,6 @@ def _sync_helpers(
             candidate = package_dir / "helpers.yaml"
             if candidate.exists():
                 module_files.append(candidate)
-    helpers_dir = settings.CONFIG_DIR / "helpers"
     if helpers_dir.exists():
         module_files.extend(sorted(helpers_dir.glob("*.y*ml")))
 
@@ -2050,8 +2116,6 @@ def _sync_helpers(
                 continue
             domain_items_by_id[composite_id] = item
 
-    unassigned_path = _ensure_unassigned_path(helpers_dir, None, warnings, preview)
-    unassigned_rel = unassigned_path.relative_to(settings.CONFIG_DIR).as_posix()
     mapping, mapping_warnings = _load_mapping(HELPERS_DOMAIN_KEY, unassigned_rel)
     warnings.extend(mapping_warnings)
 
@@ -2426,6 +2490,297 @@ def _sync_yaml_modules_state(
     return changed_files
 
 
+def _update_storage_lovelace_dashboards(
+    warnings: list[str],
+    changed_files: list[str],
+    *,
+    prune_stale: bool = True,
+) -> None:
+    """Export Lovelace storage dashboards into `packages/unassigned/`.
+
+    This reads `.storage/lovelace_dashboards` + `.storage/lovelace.<id>` and writes one YAML file
+    per dashboard: `packages/unassigned/lovelace.<id>.unassigned.yaml`.
+    """
+
+    storage_dir = settings.CONFIG_DIR / ".storage"
+    dashboards_path = storage_dir / "lovelace_dashboards"
+    dashboards = _load_storage_json(dashboards_path, warnings)
+    dashboard_ids: list[str] = []
+    if dashboards is not None:
+        data = dashboards.get("data")
+        if not isinstance(data, dict):
+            warnings.append(f"{dashboards_path.relative_to(settings.CONFIG_DIR)} data is not a map.")
+        else:
+            items = data.get("items") or []
+            if not isinstance(items, list):
+                warnings.append(
+                    f"{dashboards_path.relative_to(settings.CONFIG_DIR)} items is not a list."
+                )
+            else:
+                for entry in items:
+                    if not isinstance(entry, dict):
+                        continue
+                    mode = entry.get("mode")
+                    if mode and mode != "storage":
+                        continue
+                    dashboard_id = entry.get("id")
+                    if not isinstance(dashboard_id, str) or not dashboard_id.strip():
+                        continue
+                    dashboard_id = dashboard_id.strip()
+                    if "/" in dashboard_id or "\\" in dashboard_id:
+                        warnings.append(
+                            f"Invalid lovelace dashboard id {dashboard_id!r} in "
+                            f"{dashboards_path.relative_to(settings.CONFIG_DIR)}."
+                        )
+                        continue
+                    dashboard_ids.append(dashboard_id)
+
+    if not dashboard_ids and storage_dir.exists():
+        for path in sorted(storage_dir.glob("lovelace.*")):
+            if not path.is_file():
+                continue
+            dashboard_id = path.name.split(".", 1)[1]
+            if not dashboard_id:
+                continue
+            if "/" in dashboard_id or "\\" in dashboard_id:
+                warnings.append(
+                    f"Invalid lovelace dashboard id {dashboard_id!r} from "
+                    f"{path.relative_to(settings.CONFIG_DIR)}."
+                )
+                continue
+            dashboard_ids.append(dashboard_id)
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for dashboard_id in dashboard_ids:
+        if dashboard_id in seen:
+            continue
+        seen.add(dashboard_id)
+        deduped.append(dashboard_id)
+    dashboard_ids = deduped
+    if not dashboard_ids:
+        return
+
+    unassigned_dir = settings.PACKAGES_DIR / "unassigned"
+    unassigned_dir.mkdir(parents=True, exist_ok=True)
+    expected_paths: set[str] = set()
+    if prune_stale:
+        expected_paths = {
+            (unassigned_dir / f"lovelace.{dashboard_id}.unassigned.yaml")
+            .relative_to(settings.CONFIG_DIR)
+            .as_posix()
+            for dashboard_id in dashboard_ids
+        }
+
+    for dashboard_id in dashboard_ids:
+        dashboard_path = storage_dir / f"lovelace.{dashboard_id}"
+        payload = _load_storage_json(dashboard_path, warnings)
+        if payload is None:
+            warnings.append(
+                f"Missing {dashboard_path.relative_to(settings.CONFIG_DIR)} for dashboard "
+                f"{dashboard_id}."
+            )
+            continue
+        storage_data = payload.get("data")
+        if not isinstance(storage_data, dict):
+            warnings.append(f"{dashboard_path.relative_to(settings.CONFIG_DIR)} data is not a map.")
+            continue
+        config = storage_data.get("config")
+        if config is None:
+            config = {}
+        if isinstance(config, list):
+            config_payload: Any = {"views": config}
+        elif isinstance(config, dict):
+            config_payload = config
+        else:
+            warnings.append(
+                f"{dashboard_path.relative_to(settings.CONFIG_DIR)} config is not a map."
+            )
+            continue
+
+        dest_path = unassigned_dir / f"lovelace.{dashboard_id}.unassigned.yaml"
+        rel_dest = dest_path.relative_to(settings.CONFIG_DIR).as_posix()
+        if _write_yaml(dest_path, config_payload, preview=None):
+            changed_files.append(rel_dest)
+
+    if prune_stale:
+        for path in sorted(unassigned_dir.glob("lovelace.*.unassigned.y*ml")):
+            rel_path = path.relative_to(settings.CONFIG_DIR).as_posix()
+            dashboard_id = _parse_lovelace_dashboard_id_from_unassigned_filename(path.name)
+            if not dashboard_id:
+                continue
+            if rel_path in expected_paths:
+                continue
+            path.unlink()
+            changed_files.append(rel_path)
+
+
+def _load_lovelace_storage_dashboard_config(path: Path, warnings: list[str]) -> dict[str, Any] | None:
+    data, _lines, error = yaml_load(path)
+    if error:
+        warnings.append(error)
+        return None
+    if data is None:
+        warnings.append(f"{path.relative_to(settings.CONFIG_DIR)} is empty.")
+        return None
+    if isinstance(data, list):
+        data = {"views": data}
+    if not isinstance(data, dict):
+        warnings.append(f"{path.relative_to(settings.CONFIG_DIR)} is not a YAML map.")
+        return None
+    expanded = expand_includes(
+        data,
+        config_dir=settings.CONFIG_DIR,
+        base_path=path,
+        warnings=warnings,
+        resolve_templates=True,
+        resolve_ha_includes=True,
+    )
+    if expanded is SKIP:
+        warnings.append(f"Skipping {path.relative_to(settings.CONFIG_DIR)} due to include expansion.")
+        return None
+    if isinstance(expanded, list):
+        expanded = {"views": expanded}
+    if not isinstance(expanded, dict):
+        warnings.append(f"{path.relative_to(settings.CONFIG_DIR)} expanded to a non-map payload.")
+        return None
+    if _contains_tagged_values(expanded):
+        warnings.append(
+            f"{path.relative_to(settings.CONFIG_DIR)} contains YAML tags that cannot be written into "
+            ".storage JSON."
+        )
+        return None
+    return expanded
+
+
+def _build_storage_lovelace_dashboards(
+    warnings: list[str],
+    changed_files: list[str],
+) -> None:
+    """Build Lovelace storage dashboards from `packages/*` + `packages/unassigned/`.
+
+    - Reads dashboard IDs from `.storage/lovelace_dashboards` (storage-mode dashboards only).
+    - Uses `packages/<name>/lovelace.<id>.yaml` overrides when present, selecting the first package
+      alphabetically and warning about duplicates.
+    - Falls back to `packages/unassigned/lovelace.<id>.unassigned.yaml` when no package override exists.
+    - Writes `.storage/lovelace.<id>` JSON for each selected dashboard config.
+    """
+
+    storage_dir = settings.CONFIG_DIR / ".storage"
+    dashboards_path = storage_dir / "lovelace_dashboards"
+    dashboards = _load_storage_json(dashboards_path, warnings)
+    if dashboards is None:
+        return
+    data = dashboards.get("data")
+    if not isinstance(data, dict):
+        warnings.append(f"{dashboards_path.relative_to(settings.CONFIG_DIR)} data is not a map.")
+        return
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        warnings.append(f"{dashboards_path.relative_to(settings.CONFIG_DIR)} items is not a list.")
+        return
+
+    dashboard_ids: list[str] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        mode = entry.get("mode")
+        if mode and mode != "storage":
+            continue
+        dashboard_id = entry.get("id")
+        if not isinstance(dashboard_id, str) or not dashboard_id.strip():
+            continue
+        dashboard_id = dashboard_id.strip()
+        if "/" in dashboard_id or "\\" in dashboard_id:
+            warnings.append(
+                f"Invalid lovelace dashboard id {dashboard_id!r} in "
+                f"{dashboards_path.relative_to(settings.CONFIG_DIR)}."
+            )
+            continue
+        dashboard_ids.append(dashboard_id)
+
+    dashboard_id_set = set(dashboard_ids)
+    if not dashboard_id_set:
+        return
+
+    chosen_by_id: dict[str, Path] = {}
+    duplicates_by_id: dict[str, list[Path]] = {}
+    packages_dir = settings.PACKAGES_DIR
+    if packages_dir.exists():
+        for package_dir in sorted(packages_dir.iterdir(), key=lambda item: item.name):
+            if not package_dir.is_dir():
+                continue
+            if package_dir.name == "unassigned":
+                continue
+            for path in sorted(package_dir.glob("lovelace.*.y*ml")):
+                dashboard_id = _parse_lovelace_dashboard_id_from_filename(path.name)
+                if not dashboard_id:
+                    continue
+                if dashboard_id not in dashboard_id_set:
+                    warnings.append(
+                        f"{path.relative_to(settings.CONFIG_DIR)} dashboard id {dashboard_id} is not "
+                        f"present in {dashboards_path.relative_to(settings.CONFIG_DIR)}; skipping."
+                    )
+                    continue
+                if dashboard_id in chosen_by_id:
+                    duplicates_by_id.setdefault(dashboard_id, []).append(path)
+                else:
+                    chosen_by_id[dashboard_id] = path
+
+    for dashboard_id, duplicates in sorted(duplicates_by_id.items()):
+        chosen = chosen_by_id.get(dashboard_id)
+        if not chosen:
+            continue
+        skipped = ", ".join(
+            dup.relative_to(settings.CONFIG_DIR).as_posix() for dup in sorted(duplicates)
+        )
+        warnings.append(
+            f"Duplicate lovelace dashboard {dashboard_id} definitions; keeping "
+            f"{chosen.relative_to(settings.CONFIG_DIR).as_posix()}, skipping: {skipped}."
+        )
+
+    unassigned_dir = settings.PACKAGES_DIR / "unassigned"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    for dashboard_id in dashboard_ids:
+        source_path = chosen_by_id.get(dashboard_id)
+        if source_path is None:
+            candidate_yaml = unassigned_dir / f"lovelace.{dashboard_id}.unassigned.yaml"
+            candidate_yml = unassigned_dir / f"lovelace.{dashboard_id}.unassigned.yml"
+            if candidate_yaml.exists():
+                source_path = candidate_yaml
+            elif candidate_yml.exists():
+                source_path = candidate_yml
+        if source_path is None:
+            continue
+
+        config = _load_lovelace_storage_dashboard_config(source_path, warnings)
+        if config is None:
+            continue
+
+        storage_path = storage_dir / f"lovelace.{dashboard_id}"
+        existing = _load_storage_json(storage_path, warnings) or {}
+        version = existing.get("version")
+        minor_version = existing.get("minor_version")
+        if not isinstance(version, int):
+            version = 1
+        if not isinstance(minor_version, int):
+            minor_version = 1
+        existing_data = existing.get("data")
+        data_payload: dict[str, Any] = {}
+        if isinstance(existing_data, dict):
+            data_payload = dict(existing_data)
+        data_payload["config"] = config
+        payload = {
+            "version": version,
+            "minor_version": minor_version,
+            "key": f"lovelace.{dashboard_id}",
+            "data": data_payload,
+        }
+        if _write_storage_json_if_changed(storage_path, payload):
+            changed_files.append(storage_path.relative_to(settings.CONFIG_DIR).as_posix())
+
+
 def sync_yaml_modules() -> dict[str, Any]:
     warnings: list[str] = []
     changed_files: list[str] = []
@@ -2434,6 +2789,7 @@ def sync_yaml_modules() -> dict[str, Any]:
     warnings.extend(state_warnings)
     first_run = not state.get("has_run", False)
     changed_files.extend(_sync_yaml_modules_state(state, warnings))
+    _update_storage_lovelace_dashboards(warnings, changed_files, prune_stale=False)
     if first_run:
         warnings = [
             warning
@@ -2465,6 +2821,7 @@ def build_yaml_modules() -> dict[str, Any]:
             write_mode="domain",
         )
     )
+    _build_storage_lovelace_dashboards(warnings, changed_files)
     if first_run:
         warnings = [
             warning
@@ -2496,6 +2853,7 @@ def update_yaml_modules() -> dict[str, Any]:
             write_mode="modules",
         )
     )
+    _update_storage_lovelace_dashboards(warnings, changed_files)
     if first_run:
         warnings = [
             warning
@@ -2899,6 +3257,9 @@ def list_module_items(rel_path: str) -> dict[str, Any]:
             "items": _list_items_from_helpers_file(path, warnings),
             "warnings": warnings,
         }
+
+    if kind == "file":
+        return {"path": rel_path, "file_kind": kind, "items": [], "warnings": warnings}
 
     raise ValueError("Unsupported module file type.")
 
@@ -3681,6 +4042,10 @@ def _module_file_context(path: Path) -> tuple[str, DomainSpec | None]:
     if root == "packages":
         if filename == "helpers.yaml":
             return "helpers", None
+        if _parse_lovelace_dashboard_id_from_unassigned_filename(filename) or _parse_lovelace_dashboard_id_from_filename(
+            filename
+        ):
+            return "file", None
         spec = _spec_by_package_filename(filename)
         if not spec:
             raise ValueError("Unsupported package module filename.")
@@ -3737,7 +4102,7 @@ def list_yaml_modules_index() -> dict[str, Any]:
 
     one_off_modules: list[dict[str, Any]] = []
     unassigned_modules: list[dict[str, Any]] = []
-    unassigned_files_by_domain: dict[str, str] = {}
+    unassigned_files_by_domain: dict[str, list[str]] = {}
     unassigned_dir = settings.PACKAGES_DIR / "unassigned"
     if unassigned_dir.exists():
         for path in sorted(unassigned_dir.rglob("*")):
@@ -3752,10 +4117,12 @@ def list_yaml_modules_index() -> dict[str, Any]:
                 spec = _spec_by_package_filename(path.name)
                 if spec:
                     domain = spec.module_dir.name
+                elif _parse_lovelace_dashboard_id_from_unassigned_filename(path.name):
+                    domain = "lovelace"
             if domain:
-                unassigned_files_by_domain[domain] = path.relative_to(
-                    settings.CONFIG_DIR
-                ).as_posix()
+                unassigned_files_by_domain.setdefault(domain, []).append(
+                    path.relative_to(settings.CONFIG_DIR).as_posix()
+                )
     for domain in MODULE_BROWSER_DOMAINS:
         dir_path = settings.CONFIG_DIR / domain
         files: list[str] = []
@@ -3768,8 +4135,22 @@ def list_yaml_modules_index() -> dict[str, Any]:
                 for path in dir_path.rglob("*")
                 if path.is_file() and _is_yaml_path(path)
             )
-        canonical_unassigned = unassigned_files_by_domain.get(domain)
-        fallback_unassigned = legacy_unassigned if legacy_unassigned in files else None
+        canonical_unassigned_files = unassigned_files_by_domain.get(domain) or []
+        primary_filename: str | None = None
+        if domain == "helpers":
+            primary_filename = "helpers.yaml"
+        else:
+            domain_key = MODULE_DOMAIN_MAP.get(domain)
+            if domain_key:
+                spec = _spec_by_key(domain_key)
+                if spec:
+                    primary_filename = spec.package_filename
+        canonical_has_primary = False
+        if primary_filename:
+            canonical_has_primary = any(
+                Path(candidate).name == primary_filename for candidate in canonical_unassigned_files
+            )
+        legacy_present = legacy_unassigned in files
         one_off_files = [path for path in files if path not in {legacy_unassigned}]
         if one_off_files:
             one_off_modules.append(
@@ -3780,14 +4161,17 @@ def list_yaml_modules_index() -> dict[str, Any]:
                     "files": one_off_files,
                 }
             )
-        unassigned_path = canonical_unassigned or fallback_unassigned
-        if unassigned_path:
+        unassigned_files: list[str] = list(canonical_unassigned_files)
+        if legacy_present and not canonical_has_primary:
+            unassigned_files.append(legacy_unassigned)
+        unassigned_files = sorted(set(unassigned_files))
+        if unassigned_files:
             unassigned_modules.append(
                 {
                     "id": f"unassigned:{domain}",
                     "name": domain,
                     "kind": "unassigned",
-                    "files": [unassigned_path],
+                    "files": unassigned_files,
                 }
             )
 

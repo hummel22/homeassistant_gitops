@@ -63,7 +63,7 @@ def test_list_yaml_modules_index_includes_packages_one_offs_and_unassigned(tmp_p
     )
     write_yaml(config_dir / "scripts/turn_on.yaml", {"alias": "Turn on"})
     write_yaml(
-        config_dir / "automations/automations.unassigned.yaml",
+        config_dir / "packages/unassigned/automation.yaml",
         [{"alias": "Unassigned", "trigger": []}],
     )
 
@@ -81,7 +81,7 @@ def test_list_yaml_modules_index_includes_packages_one_offs_and_unassigned(tmp_p
     assert "automations/oneoff.yaml" in modules["one_offs:automations"]["files"]
     assert "scripts/turn_on.yaml" in modules["one_offs:scripts"]["files"]
     assert (
-        "automations/automations.unassigned.yaml"
+        "packages/unassigned/automation.yaml"
         in modules["unassigned:automations"]["files"]
     )
 
@@ -137,7 +137,7 @@ def test_sync_builds_domain_and_unassigned(tmp_path: Path) -> None:
     assert {"Wake up", "Dishwasher", "UI only"} <= aliases
 
     unassigned = yaml.safe_load(
-        (config_dir / "automations/automations.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/automation.yaml").read_text(encoding="utf-8")
     )
     assert unassigned[0]["alias"] == "UI only"
 
@@ -177,7 +177,7 @@ def test_sync_updates_from_domain_changes(tmp_path: Path) -> None:
     assert module_items[0]["alias"] == "Wake up updated"
 
     unassigned_items = yaml.safe_load(
-        (config_dir / "automations/automations.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/automation.yaml").read_text(encoding="utf-8")
     )
     assert unassigned_items[0]["alias"] == "UI updated"
 
@@ -216,7 +216,7 @@ def test_sync_prefers_modules_for_assigned_when_both_change(tmp_path: Path) -> N
     assert module_items[0]["alias"] == "Module wins"
 
     unassigned_items = yaml.safe_load(
-        (config_dir / "automations/automations.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/automation.yaml").read_text(encoding="utf-8")
     )
     assert unassigned_items[0]["alias"] == "UI wins"
 
@@ -368,7 +368,7 @@ def test_sync_groups_mapping_domain_round_trip(tmp_path: Path) -> None:
     main.sync_yaml_modules()
 
     unassigned = yaml.safe_load(
-        (config_dir / "groups/groups.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/groups.yaml").read_text(encoding="utf-8")
     )
     assert "ui_only" in unassigned
 
@@ -434,7 +434,7 @@ def test_preview_yaml_modules_separates_build_and_update(tmp_path: Path) -> None
     update_paths = {entry["path"] for entry in preview["update_diffs"]}
 
     assert "automations.yaml" in build_paths
-    assert "automations/automations.unassigned.yaml" in update_paths
+    assert "packages/unassigned/automation.yaml" in update_paths
     assert all(not path.startswith(".gitops/") for path in build_paths | update_paths)
     assert all(not path.startswith("system/") for path in build_paths | update_paths)
 

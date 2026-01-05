@@ -293,9 +293,12 @@ def git_list_files(mode: str = "changed", include_ignored: bool = False) -> list
 
 def git_check_ignore(path: str) -> dict[str, Any]:
     rel_path = normalize_repo_path(path)
+    is_ignored = run_git(["check-ignore", "-q", "--", rel_path], check=False)
+    if is_ignored.returncode != 0:
+        return {"path": rel_path, "ignored": False}
     result = run_git(["check-ignore", "-v", "--", rel_path], check=False)
     if result.returncode != 0 or not result.stdout.strip():
-        return {"path": rel_path, "ignored": False}
+        return {"path": rel_path, "ignored": True}
     line = result.stdout.strip().splitlines()[0]
     source = ""
     pattern = ""
@@ -308,6 +311,8 @@ def git_check_ignore(path: str) -> dict[str, Any]:
         source, line_part, pattern = source_block.split(":", 2)
         if line_part.isdigit():
             line_number = int(line_part)
+    if pattern.startswith("!"):
+        return {"path": rel_path, "ignored": False}
     return {
         "path": rel_path,
         "ignored": True,

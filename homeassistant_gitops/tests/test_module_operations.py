@@ -47,7 +47,7 @@ def get_yaml_modules_module():
 def test_operate_move_to_existing_package_injects_id(tmp_path: Path) -> None:
     _, config_dir = load_main(tmp_path)
     write_yaml(
-        config_dir / "automations/automations.unassigned.yaml",
+        config_dir / "packages/unassigned/automation.yaml",
         [{"alias": "Morning", "trigger": [], "action": []}],
     )
     write_yaml(
@@ -56,12 +56,12 @@ def test_operate_move_to_existing_package_injects_id(tmp_path: Path) -> None:
     )
 
     yaml_modules = get_yaml_modules_module()
-    listing = yaml_modules.list_module_items("automations/automations.unassigned.yaml")
+    listing = yaml_modules.list_module_items("packages/unassigned/automation.yaml")
     selector = listing["items"][0]["selector"]
 
     yaml_modules.operate_module_items(
         "move",
-        [{"path": "automations/automations.unassigned.yaml", "selector": selector}],
+        [{"path": "packages/unassigned/automation.yaml", "selector": selector}],
         {"type": "existing_package", "package_name": "kitchen"},
     )
 
@@ -72,7 +72,7 @@ def test_operate_move_to_existing_package_injects_id(tmp_path: Path) -> None:
     assert moved["id"] == "morning"
 
     unassigned = yaml.safe_load(
-        (config_dir / "automations/automations.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/automation.yaml").read_text(encoding="utf-8")
     )
     unassigned = unassigned or []
     assert not any(item.get("alias") == "Morning" for item in unassigned)
@@ -86,17 +86,17 @@ def test_operate_move_to_existing_package_injects_id(tmp_path: Path) -> None:
 def test_operate_move_to_one_off_creates_file(tmp_path: Path) -> None:
     _, config_dir = load_main(tmp_path)
     write_yaml(
-        config_dir / "automations/automations.unassigned.yaml",
+        config_dir / "packages/unassigned/automation.yaml",
         [{"alias": "Laundry", "trigger": [], "action": []}],
     )
 
     yaml_modules = get_yaml_modules_module()
-    listing = yaml_modules.list_module_items("automations/automations.unassigned.yaml")
+    listing = yaml_modules.list_module_items("packages/unassigned/automation.yaml")
     selector = listing["items"][0]["selector"]
 
     yaml_modules.operate_module_items(
         "move",
-        [{"path": "automations/automations.unassigned.yaml", "selector": selector}],
+        [{"path": "packages/unassigned/automation.yaml", "selector": selector}],
         {"type": "one_off", "one_off_filename": "laundry.yaml"},
     )
 
@@ -129,7 +129,7 @@ def test_operate_unassign_helpers_moves_to_unassigned(tmp_path: Path) -> None:
     assert "front_lights" not in helpers_data.get("input_boolean", {})
 
     unassigned = yaml.safe_load(
-        (config_dir / "helpers/helpers.unassigned.yaml").read_text(encoding="utf-8")
+        (config_dir / "packages/unassigned/helpers.yaml").read_text(encoding="utf-8")
     )
     assert "front_lights" in (unassigned or {}).get("input_boolean", {})
 
@@ -160,8 +160,4 @@ def test_operate_delete_removes_domain_item(tmp_path: Path) -> None:
     module_items = module_items or []
     assert not any(item.get("alias") == "Remove me" for item in module_items)
 
-    domain_items = yaml.safe_load(
-        (config_dir / "automations.yaml").read_text(encoding="utf-8")
-    )
-    domain_items = domain_items or []
-    assert not any(item.get("alias") == "Remove me" for item in domain_items)
+    assert not (config_dir / "automations.yaml").exists()

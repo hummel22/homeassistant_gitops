@@ -118,8 +118,7 @@ def test_delete_group_removes_definition(tmp_path: Path) -> None:
     module_yaml = read_yaml(config_dir / "groups/my_groups.yaml")
     assert "kitchen" not in module_yaml
 
-    domain_yaml = read_yaml(config_dir / "groups.yaml")
-    assert "kitchen" not in domain_yaml
+    assert not (config_dir / "groups.yaml").exists()
 
 
 def test_restart_ack_tracks_changes(tmp_path: Path) -> None:
